@@ -14,7 +14,7 @@ class SVHN(data.Dataset):
         'train': ["http://ufldl.stanford.edu/housenumbers/train_32x32.mat",
                   "train_32x32.mat", "e26dedcc434d2e4c54c9b2d4a06d8373"],
         'test': ["http://ufldl.stanford.edu/housenumbers/test_32x32.mat",
-                 "selected_test_32x32.mat", "eb5a983be6a315427106f1b164d9cef3"],
+                 "test_32x32.mat", "eb5a983be6a315427106f1b164d9cef3"],
         'extra': ["http://ufldl.stanford.edu/housenumbers/extra_32x32.mat",
                   "extra_32x32.mat", "a93ce644f1a588dc4d68dda5feec44a7"],
         'train_and_extra': [

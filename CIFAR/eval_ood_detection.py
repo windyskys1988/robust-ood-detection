@@ -138,15 +138,15 @@ def eval_mahalanobis(sample_mean, precision, regressor, magnitude):
     ])
 
     if args.in_dataset == "CIFAR-10":
-        trainset= torchvision.datasets.CIFAR10('./datasets/cifar10', train=True, download=True, transform=transform)
+        trainset= torchvision.datasets.CIFAR10('../../data', train=True, download=True, transform=transform)
         trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
-        testset = torchvision.datasets.CIFAR10(root='./datasets/cifar10', train=False, download=True, transform=transform)
+        testset = torchvision.datasets.CIFAR10(root='../../data', train=False, download=True, transform=transform)
         testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
         num_classes = 10
     elif args.in_dataset == "CIFAR-100":
-        trainset= torchvision.datasets.CIFAR100('./datasets/cifar10', train=True, download=True, transform=transform)
+        trainset= torchvision.datasets.CIFAR100('./datasets/cifar100', train=True, download=True, transform=transform)
         trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
         testset = torchvision.datasets.CIFAR100(root='./datasets/cifar100', train=False, download=True, transform=transform)
@@ -289,7 +289,7 @@ def eval_msp_and_odin():
     ])
 
     if args.in_dataset == "CIFAR-10":
-        testset = torchvision.datasets.CIFAR10(root='./datasets/cifar10', train=False, download=True, transform=transform)
+        testset = torchvision.datasets.CIFAR10(root='../../data', train=False, download=True, transform=transform)
         testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size,
                                          shuffle=True, num_workers=2)
         num_classes = 10
@@ -308,7 +308,7 @@ def eval_msp_and_odin():
     model.cuda()
 
     if args.out_dataset == 'SVHN':
-        testsetout = svhn.SVHN('datasets/ood_datasets/svhn/', split='test',
+        testsetout = svhn.SVHN('../../data/SVHN/', split='test',
                               transform=transforms.ToTensor(), download=False)
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size,
                                          shuffle=True, num_workers=2)
@@ -323,7 +323,7 @@ def eval_msp_and_odin():
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
                                                  num_workers=2)
     else:
-        testsetout = torchvision.datasets.ImageFolder("./datasets/ood_datasets/{}".format(args.out_dataset), transform=transform)
+        testsetout = torchvision.datasets.ImageFolder("../../data/{}".format(args.out_dataset), transform=transform)
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size,
                                          shuffle=True, num_workers=2)
 
@@ -452,10 +452,10 @@ def tune_mahalanobis_hyperparams():
     ])
 
     if args.in_dataset == "CIFAR-10":
-        trainset= torchvision.datasets.CIFAR10('./datasets/cifar10', train=True, download=True, transform=transform)
+        trainset= torchvision.datasets.CIFAR10('../../data', train=True, download=True, transform=transform)
         trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
-        testset = torchvision.datasets.CIFAR10(root='./datasets/cifar10', train=False, download=True, transform=transform)
+        testset = torchvision.datasets.CIFAR10(root='../../data', train=False, download=True, transform=transform)
         testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
         num_classes = 10

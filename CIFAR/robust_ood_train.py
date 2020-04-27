@@ -124,11 +124,11 @@ def main():
 
     if args.in_dataset == "CIFAR-10":
         train_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR10('./datasets/cifar10', train=True, download=True,
+            datasets.CIFAR10('../../data', train=True, download=True,
                              transform=transform_train),
             batch_size=args.batch_size, shuffle=True, **kwargs)
         val_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR10('./datasets/cifar10', train=False, transform=transform_test),
+            datasets.CIFAR10('../../data', train=False, transform=transform_test),
             batch_size=args.batch_size, shuffle=True, **kwargs)
         num_classes = 10
     elif args.in_dataset == "CIFAR-100":

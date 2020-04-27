@@ -2,6 +2,7 @@ import argparse
 import os
 
 import sys
+
 sys.path.append("..")
 
 import shutil
@@ -47,8 +48,10 @@ parser.set_defaults(augment=True)
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -63,6 +66,7 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
 
 def accuracy(output, target, topk=(1,)):
     """Computes the precision@k for the specified values of k"""
@@ -79,23 +83,24 @@ def accuracy(output, target, topk=(1,)):
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
 
+
 # Data loading code
-normalizer = transforms.Normalize(mean=[x/255.0 for x in [125.3, 123.0, 113.9]],
-                                 std=[x/255.0 for x in [63.0, 62.1, 66.7]])
+normalizer = transforms.Normalize(mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
+                                  std=[x / 255.0 for x in [63.0, 62.1, 66.7]])
 
 transform_test = transforms.Compose([
     transforms.ToTensor()
-    ])
+])
 
 if args.dataset == "CIFAR-10":
-    testset = datasets.CIFAR10(root='./datasets/cifar10', train=False, download=True, transform=transform_test)
+    testset = datasets.CIFAR10(root='../../data', train=False, download=True, transform=transform_test)
     test_loader = torch.utils.data.DataLoader(testset, batch_size=args.batch_size,
-                                     shuffle=False, num_workers=2)
+                                              shuffle=False, num_workers=2)
     num_classes = 10
 elif args.dataset == "CIFAR-100":
     testset = datasets.CIFAR100(root='./datasets/cifar100', train=False, download=True, transform=transform_test)
     test_loader = torch.utils.data.DataLoader(testset, batch_size=args.batch_size,
-                                     shuffle=False, num_workers=2)
+                                              shuffle=False, num_workers=2)
     num_classes = 100
 
 # create model
@@ -107,7 +112,7 @@ model = model.cuda()
 checkpoint = torch.load("./checkpoints/{name}/checkpoint_{epochs}.pth.tar".format(name=args.name, epochs=args.epochs))
 model.load_state_dict(checkpoint['state_dict'])
 
-attack = LinfPGDAttack(model = model, eps=args.epsilon, nb_iter=args.iters, eps_iter=args.iter_size, rand_init=True)
+attack = LinfPGDAttack(model=model, eps=args.epsilon, nb_iter=args.iters, eps_iter=args.iter_size, rand_init=True)
 
 nat_top1 = AverageMeter()
 adv_top1 = AverageMeter()
@@ -129,5 +134,5 @@ for batch_index, (input, target) in enumerate(test_loader):
         adv_prec1 = accuracy(adv_output.data, target, topk=(1,))[0]
         adv_top1.update(adv_prec1, input.size(0))
 
-print('Accuracy: %.4f'%nat_top1.avg)
-print('Robustness: %.4f'%adv_top1.avg)
+print('Accuracy: %.4f' % nat_top1.avg)
+print('Robustness: %.4f' % adv_top1.avg)
