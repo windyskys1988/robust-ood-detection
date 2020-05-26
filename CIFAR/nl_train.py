@@ -143,13 +143,6 @@ def main():
             batch_size=args.batch_size, shuffle=True, **kwargs)
         num_classes = 100
 
-    if args.ood:
-        ood_loader = torch.utils.data.DataLoader(
-            TinyImages(transform=transforms.Compose(
-                [transforms.ToTensor(), transforms.ToPILImage(), transforms.RandomCrop(32, padding=4),
-                 transforms.RandomHorizontalFlip(), transforms.ToTensor()])),
-            batch_size=args.ood_batch_size, shuffle=False, **kwargs)
-
     # create model
     model = dn.DenseNet3(args.layers, num_classes, args.growth, reduction=args.reduce,
                          bottleneck=args.bottleneck, dropRate=args.droprate, normalizer=normalizer)
@@ -184,8 +177,8 @@ def main():
 
     cudnn.benchmark = True
 
-    # define loss function (criterion) and pptimizer
-    criterion = nn.CrossEntropyLoss().cuda()
+    # define loss function (criterion) and pptimizer ! 为NL标签已改为BCELoss
+    criterion = nn.BCELoss().cuda()
 
     if args.ood:
         ood_criterion = OELoss().cuda()
@@ -215,14 +208,10 @@ def main():
 
         # train for one epoch
         if args.ood:
-            if args.adv:
-                train_ood(train_loader, ood_loader, model, criterion, ood_criterion, optimizer, scheduler, epoch,
-                          attack_in, attack_out)
-            else:
-                train_ood(train_loader, ood_loader, model, criterion, ood_criterion, optimizer, scheduler, epoch)
+            pass
         else:
             if args.adv:
-                train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in)
+                pass
             else:
                 train(train_loader, model, criterion, optimizer, scheduler, epoch)
 
@@ -253,10 +242,17 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
     end = time.time()
     for i, (input, target) in enumerate(train_loader):
         target = target.cuda()
-
+        # print(target)
         nat_input = input.detach().clone()
         nat_output = model(nat_input)
-        nat_loss = criterion(nat_output, target)
+        # 手工加个sigmoid步骤，BCELoss只支持0~1之间结果
+        nat_output = torch.sigmoid(nat_output)
+        # print(nat_output)
+        labels = torch.zeros(target.size()[0], 10).to('cuda').scatter_(dim=1, index=torch.unsqueeze(target, dim=1),
+                                                                       value=1)
+        labels = 1 - labels
+        # print(labels)
+        nat_loss = criterion(nat_output, labels)
 
         # measure accuracy and record loss
         nat_prec1 = accuracy(nat_output.data, target, topk=(1,))[0]
@@ -269,6 +265,7 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
             if args.lr_scheduler == 'cosine_annealing':
                 scheduler.step()
             optimizer.zero_grad()
+
             loss.backward()
             optimizer.step()
 
@@ -283,163 +280,6 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
                       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
                     epoch, i, len(train_loader), batch_time=batch_time,
                     loss=nat_losses, top1=nat_top1))
-        else:
-            adv_input = attack_in.perturb(input, target)
-            adv_output = model(adv_input)
-            adv_loss = criterion(adv_output, target)
-
-            # measure accuracy and record loss
-            adv_prec1 = accuracy(adv_output.data, target, topk=(1,))[0]
-            adv_losses.update(adv_loss.data, input.size(0))
-            adv_top1.update(adv_prec1, input.size(0))
-
-            # compute gradient and do SGD step
-            loss = adv_loss
-
-            if args.lr_scheduler == 'cosine_annealing':
-                scheduler.step()
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            if i % args.print_freq == 0:
-                print('Epoch: [{0}][{1}/{2}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Nat Loss {nat_loss.val:.4f} ({nat_loss.avg:.4f})\t'
-                      'Nat Prec@1 {nat_top1.val:.3f} ({nat_top1.avg:.3f})\t'
-                      'Adv Loss {adv_loss.val:.4f} ({adv_loss.avg:.4f})\t'
-                      'Adv Prec@1 {adv_top1.val:.3f} ({adv_top1.avg:.3f})'.format(
-                    epoch, i, len(train_loader), batch_time=batch_time,
-                    nat_loss=nat_losses, nat_top1=nat_top1, adv_loss=adv_losses, adv_top1=adv_top1))
-
-    # log to TensorBoard
-    if args.tensorboard:
-        log_value('nat_train_loss', nat_losses.avg, epoch)
-        log_value('nat_train_acc', nat_top1.avg, epoch)
-        log_value('adv_train_loss', adv_losses.avg, epoch)
-        log_value('adv_train_acc', adv_top1.avg, epoch)
-
-
-def train_ood(train_loader_in, train_loader_out, model, criterion, ood_criterion, optimizer, scheduler, epoch,
-              attack_in=None, attack_out=None):
-    """Train for one epoch on the training set"""
-    batch_time = AverageMeter()
-
-    nat_in_losses = AverageMeter()
-    nat_out_losses = AverageMeter()
-    nat_top1 = AverageMeter()
-
-    adv_in_losses = AverageMeter()
-    adv_out_losses = AverageMeter()
-    adv_top1 = AverageMeter()
-
-    # start at a random point of the outlier dataset; this induces more randomness without obliterating locality
-    train_loader_out.dataset.offset = np.random.randint(len(train_loader_out.dataset))
-
-    # switch to train mode
-    model.train()
-
-    end = time.time()
-    for i, (in_set, out_set) in enumerate(zip(train_loader_in, train_loader_out)):
-        input = torch.cat((in_set[0], out_set[0]), 0)
-        in_len = len(in_set[0])
-        out_len = len(out_set[0])
-        target = in_set[1]
-
-        target = target.cuda()
-
-        nat_input = input.detach().clone()
-        nat_output = model(nat_input)
-
-        nat_in_output = nat_output[:in_len]
-        nat_out_output = nat_output[in_len:]
-        nat_in_loss = criterion(nat_in_output, target)
-
-        nat_out_loss = ood_criterion(nat_out_output)
-
-        # measure accuracy and record loss
-        nat_prec1 = accuracy(nat_in_output.data, target, topk=(1,))[0]
-        nat_in_losses.update(nat_in_loss.data, in_len)
-        nat_out_losses.update(nat_out_loss.data, out_len)
-        nat_top1.update(nat_prec1, in_len)
-
-        if not args.adv:
-            # compute gradient and do SGD step
-            loss = nat_in_loss + args.beta2 * nat_out_loss
-
-            if args.lr_scheduler == 'cosine_annealing':
-                scheduler.step()
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            if i % args.print_freq == 0:
-                print('Epoch: [{0}][{1}/{2}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'In Loss {in_loss.val:.4f} ({in_loss.avg:.4f})\t'
-                      'Out Loss {out_loss.val:.4f} ({out_loss.avg:.4f})\t'
-                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                    epoch, i, len(train_loader_in), batch_time=batch_time,
-                    in_loss=nat_in_losses, out_loss=nat_out_losses, top1=nat_top1))
-        else:
-            adv_in_input = attack_in.perturb(in_set[0], target)
-
-            adv_out_input = attack_out.perturb(out_set[0])
-
-            adv_input = torch.cat((adv_in_input, adv_out_input), 0)
-            adv_output = model(adv_input)
-
-            adv_in_output = adv_output[:in_len]
-            adv_out_output = adv_output[in_len:]
-
-            adv_in_loss = criterion(adv_in_output, target)
-
-            adv_out_loss = ood_criterion(adv_out_output)
-
-            # measure accuracy and record loss
-            adv_prec1 = accuracy(adv_in_output.data, target, topk=(1,))[0]
-            adv_in_losses.update(adv_in_loss.data, in_len)
-            adv_out_losses.update(adv_out_loss.data, out_len)
-            adv_top1.update(adv_prec1, in_len)
-
-            # compute gradient and do SGD step
-            if args.adv_only_in:
-                loss = adv_in_loss + args.beta2 * nat_out_loss
-            else:
-                loss = adv_in_loss + args.beta3 * adv_out_loss
-
-            if args.lr_scheduler == 'cosine_annealing':
-                scheduler.step()
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            if i % args.print_freq == 0:
-                print('Epoch: [{0}][{1}/{2}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Nat In Loss {nat_in_loss.val:.4f} ({nat_in_loss.avg:.4f})\t'
-                      'Nat Out Loss {nat_out_loss.val:.4f} ({nat_out_loss.avg:.4f})\t'
-                      'Nat Prec@1 {nat_top1.val:.3f} ({nat_top1.avg:.3f})\t'
-                      'Adv In Loss {adv_in_loss.val:.4f} ({adv_in_loss.avg:.4f})\t'
-                      'Adv Out Loss {adv_out_loss.val:.4f} ({adv_out_loss.avg:.4f})\t'
-                      'Adv Prec@1 {adv_top1.val:.3f} ({adv_top1.avg:.3f})'.format(
-                    epoch, i, len(train_loader_in), batch_time=batch_time,
-                    nat_in_loss=nat_in_losses, nat_out_loss=nat_out_losses, nat_top1=nat_top1,
-                    adv_in_loss=adv_in_losses, adv_out_loss=adv_out_losses, adv_top1=adv_top1))
 
     # log to TensorBoard
     if args.tensorboard:
@@ -462,8 +302,12 @@ def validate(val_loader, model, criterion, epoch):
     for i, (input, target) in enumerate(val_loader):
         target = target.cuda()
         # compute output
-        output = model(input)
-        loss = criterion(output, target)
+        output = torch.sigmoid(model(input))
+        # print(nat_output)
+        labels = torch.zeros(target.size()[0], 10).to('cuda').scatter_(dim=1, index=torch.unsqueeze(target, dim=1),
+                                                                       value=1)
+        labels = 1 - labels
+        loss = criterion(output, labels)
 
         # measure accuracy and record loss
         prec1 = accuracy(output.data, target, topk=(1,))[0]
@@ -553,7 +397,7 @@ def accuracy(output, target, topk=(1,)):
     maxk = max(topk)
     batch_size = target.size(0)
 
-    _, pred = output.topk(maxk, 1, True, True)
+    _, pred = output.topk(maxk, 1, largest=False, sorted=True)
     pred = pred.t()
     correct = pred.eq(target.view(1, -1).expand_as(pred))
 
