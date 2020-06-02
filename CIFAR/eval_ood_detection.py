@@ -344,6 +344,7 @@ def eval_msp_and_odin():
 
     count = 0
     for j, data in enumerate(testloaderIn):
+        if j == 10: break
         images, _ = data
         batch_size = images.shape[0]
 
@@ -385,6 +386,7 @@ def eval_msp_and_odin():
     count = 0
 
     for j, data in enumerate(testloaderOut):
+        if j == 10: break
         images, labels = data
         batch_size = images.shape[0]
 
