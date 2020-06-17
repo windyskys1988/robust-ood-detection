@@ -49,7 +49,7 @@ parser.add_argument('--iter-size', default=1.0, type=float, help='attack step si
 parser.add_argument('--epochs', default=100, type=int,
                     help='number of total epochs to run')
 
-parser.add_argument('-b', '--batch-size', default=10, type=int,
+parser.add_argument('-b', '--batch-size', default=40, type=int,
                     help='mini-batch size')
 
 parser.add_argument('--layers', default=100, type=int,
@@ -75,7 +75,8 @@ def MSP(outputs, model):
 
 
 def tesnsor_stat(tag, arr):
-    print(tag + " count ", arr.shape[0], " max ", torch.max(arr), " min ", torch.min(arr), " mean ", torch.mean(arr), " var ",
+    print(tag + " count ", arr.shape[0], " max ", torch.max(arr), " min ", torch.min(arr), " mean ", torch.mean(arr),
+          " var ",
           torch.var(arr), " median ", torch.median(arr))
 
 
@@ -94,9 +95,9 @@ def ODIN(inputs, outputs, model, temper, noiseMagnitude1):
     loss.backward()
 
     # Normalizing the gradient to binary in {0, 1}
-    # gradient = inputs.grad.data * 1000 # 5000 best
+    # gradient = inputs.grad.data * (60000.0) # 5000 best
     # tesnsor_stat('grad', gradient)
-    gradient =  torch.ge(inputs.grad.data, 0)
+    gradient = torch.ge(inputs.grad.data, 0)
     gradient = (gradient.float() - 0.5) * 2
 
     # Adding small perturbations to images
@@ -159,10 +160,10 @@ def eval_mahalanobis(sample_mean, precision, regressor, magnitude):
 
         num_classes = 10
     elif args.in_dataset == "CIFAR-100":
-        trainset = torchvision.datasets.CIFAR100('./datasets/cifar100', train=True, download=True, transform=transform)
+        trainset = torchvision.datasets.CIFAR100('../../data', train=True, download=True, transform=transform)
         trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
-        testset = torchvision.datasets.CIFAR100(root='./datasets/cifar100', train=False, download=True,
+        testset = torchvision.datasets.CIFAR100(root='../../data', train=False, download=True,
                                                 transform=transform)
         testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
@@ -319,7 +320,7 @@ def eval_msp_and_odin():
                                                    shuffle=True, num_workers=2)
         num_classes = 10
     elif args.in_dataset == "CIFAR-100":
-        testset = torchvision.datasets.CIFAR100(root='./datasets/cifar100', train=False, download=True,
+        testset = torchvision.datasets.CIFAR100(root='../../data', train=False, download=True,
                                                 transform=transform)
         testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size,
                                                    shuffle=True, num_workers=2)
@@ -340,7 +341,7 @@ def eval_msp_and_odin():
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size,
                                                     shuffle=True, num_workers=2)
     elif args.out_dataset == 'dtd':
-        testsetout = torchvision.datasets.ImageFolder(root="datasets/ood_datasets/dtd/images",
+        testsetout = torchvision.datasets.ImageFolder(root="../../data/dtd/images",
                                                       transform=transforms.Compose(
                                                           [transforms.Resize(32), transforms.CenterCrop(32),
                                                            transforms.ToTensor()]))

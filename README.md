@@ -12,7 +12,7 @@ It is tested under Ubuntu Linux 16.04.1 and Python 3.6 environment, and requries
 * [GTSRB](http://benchmark.ini.rub.de/?section=gtsrb&subsection=dataset): we provide scripts to download it.
 
 ## Downloading out-of-distribution Datasets
-* [80 Million Tiny Images](http://horatio.cs.nyu.edu/mit/tiny/data/tiny_images.bin)
+* [80 Million Tiny Images](http://horatio.cs.nyu.edu/mit/tiny/data/tiny_images.bin) 227GB
 * [SVHN](http://ufldl.stanford.edu/housenumbers)
 * [Textures](https://www.robots.ox.ac.uk/~vgg/data/dtd/)
 * [Places365](http://places2.csail.mit.edu/download.html)
