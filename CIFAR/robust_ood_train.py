@@ -247,8 +247,19 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
     end = time.time()
     for i, (input, target) in enumerate(train_loader):
         target = target.cuda()
+        print(type(target))
+        print(target.size())
+        add_num = int(target.size()[0] / 7)
+        print(add_num)
 
+        print(type(input))
+        print(input.size())
         nat_input = input.detach().clone()
+
+        print(type(nat_input))
+        print(nat_input.size())
+
+        exit(0)
         nat_output = model(nat_input)
         nat_loss = criterion(nat_output, target)
 
