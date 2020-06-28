@@ -83,13 +83,21 @@ def tesnsor_stat(tag, arr):
 def ODIN(inputs, outputs, model, temper, noiseMagnitude1):
     # Calculating the perturbation we need to add, that is,
     # the sign of gradient of cross entropy loss w.r.t. input
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.BCELoss().cuda()
+    # criterion = nn.CrossEntropyLoss()
 
     maxIndexTemp = np.argmax(outputs.data.cpu().numpy(), axis=1)
 
     # Using temperature scaling
     outputs = outputs / temper
+    # 手工加个sigmoid步骤，BCELoss只支持0~1之间结果
+    outputs = torch.sigmoid(outputs)
+
     labels = Variable(torch.LongTensor(maxIndexTemp).cuda())
+
+    # print(nat_output)
+    labels = torch.zeros(labels.size()[0], 10).to('cuda').scatter_(dim=1, index=torch.unsqueeze(labels, dim=1),
+                                                                   value=1)
     loss = criterion(outputs, labels)
     loss.backward()
 
