@@ -81,17 +81,21 @@ def tesnsor_stat(tag, arr):
 
 
 def ODIN(inputs, outputs, model, temper, noiseMagnitude1):
+    print(outputs)
+    # print(torch.sigmoid(outputs))
+    # return 0
     # Calculating the perturbation we need to add, that is,
     # the sign of gradient of cross entropy loss w.r.t. input
+
     criterion = nn.BCELoss().cuda()
     # criterion = nn.CrossEntropyLoss()
 
     maxIndexTemp = np.argmax(outputs.data.cpu().numpy(), axis=1)
 
+    outputs = torch.sigmoid(outputs)
+
     # Using temperature scaling
     outputs = outputs / temper
-    # 手工加个sigmoid步骤，BCELoss只支持0~1之间结果
-    outputs = torch.sigmoid(outputs)
 
     labels = Variable(torch.LongTensor(maxIndexTemp).cuda())
 
@@ -102,10 +106,10 @@ def ODIN(inputs, outputs, model, temper, noiseMagnitude1):
     loss.backward()
 
     # Normalizing the gradient to binary in {0, 1}
-    # gradient = inputs.grad.data * (-2000.0) # 5000 best
-    # tesnsor_stat('grad', gradient)
-    gradient = torch.ge(inputs.grad.data, 0)
-    gradient = (gradient.float() - 0.5) * 2
+    gradient = inputs.grad.data * (-10.0) # 5000 best
+    tesnsor_stat('grad', gradient)
+    # gradient = torch.ge(inputs.grad.data, 0)
+    # gradient = (gradient.float() - 0.5) * 2
 
     # Adding small perturbations to images
     tempInputs = torch.add(inputs.data, -noiseMagnitude1, gradient)
@@ -383,7 +387,7 @@ def eval_msp_and_odin():
 
     count = 0
     for j, data in enumerate(testloaderIn):
-        if j == 10: break
+        if j == 1: break
         images, _ = data
         batch_size = images.shape[0]
 
@@ -425,7 +429,7 @@ def eval_msp_and_odin():
     count = 0
 
     for j, data in enumerate(testloaderOut):
-        if j == 10: break
+        if j == 1: break
         images, labels = data
         batch_size = images.shape[0]
 

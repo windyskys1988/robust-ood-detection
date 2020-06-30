@@ -83,6 +83,9 @@ def tesnsor_stat(tag, arr):
 def ODIN(inputs, outputs, model, temper, noiseMagnitude1):
     # Calculating the perturbation we need to add, that is,
     # the sign of gradient of cross entropy loss w.r.t. input
+    print(torch.softmax(outputs,axis=1))
+    # return 0
+
     criterion = nn.CrossEntropyLoss()
 
     maxIndexTemp = np.argmax(outputs.data.cpu().numpy(), axis=1)
@@ -94,10 +97,30 @@ def ODIN(inputs, outputs, model, temper, noiseMagnitude1):
     loss.backward()
 
     # Normalizing the gradient to binary in {0, 1}
-    # gradient = inputs.grad.data * (-2000.0) # 5000 best
+    # gradient = inputs.grad.data * (40000.0) # 5000 best
+    # 绝对值大小对比
+    th_top = torch.median(inputs.grad.data[inputs.grad.data > 0])
+    # print(th_top)
+    th_bottom = torch.median(inputs.grad.data[inputs.grad.data < 0])
+    # print(th_bottom)
+    gradient_top = torch.ge(inputs.grad.data, th_top)
+    gradient_bottom = torch.le(inputs.grad.data, th_bottom)
+    gradient_great = gradient_top.float() - gradient_bottom.float()
+    # 取较大绝对值
+    gradient = gradient_great * 0.5
+    # print(gradient_great)
+
+    # 取较小绝对值
+    # gradient = torch.ge(inputs.grad.data, 0)
+    # gradient = (gradient.float() - 0.5) * 2
+    # gradient = (gradient - gradient_great) * 6.0
+    # print(gradient)
+
+    # print(gradient.float())
+    # 普通 ODIN
+    # gradient = torch.ge(inputs.grad.data, 0)
+    # gradient = (gradient.float() - 0.5) * 2
     # tesnsor_stat('grad', gradient)
-    gradient = torch.ge(inputs.grad.data, 0)
-    gradient = (gradient.float() - 0.5) * 2
 
     # Adding small perturbations to images
     tempInputs = torch.add(inputs.data, -noiseMagnitude1, gradient)
