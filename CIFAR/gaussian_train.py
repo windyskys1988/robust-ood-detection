@@ -247,21 +247,31 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
     end = time.time()
     for i, (input, target) in enumerate(train_loader):
         target = target.cuda()
-        print(type(target))
-        print(target.size())
-        add_num = int(target.size()[0] / 7)
-        print(add_num)
+        # print(target)
+        # print(target.size())
+        # add_num = int(target.size()[0] / 7)
+        # print(add_num)
 
-        print(type(input))
-        print(input.size())
+        # print(type(input))
+        # print(input.size())
         nat_input = input.detach().clone()
 
-        print(type(nat_input))
-        print(nat_input.size())
+        # print(type(nat_input))
+        # print(nat_input.size())
 
-        exit(0)
+
         nat_output = model(nat_input)
-        nat_loss = criterion(nat_output, target)
+        # print(nat_output)
+        # nat_loss = criterion(nat_output, target)
+        # print(nat_loss)
+
+        labels = torch.full(size=(input.size()[0], 10), fill_value=0).cuda()
+        labels.scatter_(dim=1, index=torch.unsqueeze(target, dim=1), value=1)
+        # print(labels)
+        log_prob = torch.nn.functional.log_softmax(nat_output, dim=1)
+        nat_loss = -torch.sum(log_prob * labels) / args.batch_size
+        # print(loss)
+        # exit(0)
 
         # measure accuracy and record loss
         nat_prec1 = accuracy(nat_output.data, target, topk=(1,))[0]
@@ -288,6 +298,38 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
                       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
                           epoch, i, len(train_loader), batch_time=batch_time,
                           loss=nat_losses, top1=nat_top1))
+
+            # gaussian训练
+            gaussian_input = torch.rand(input.size())
+            nat_output = model(gaussian_input)
+            # print(nat_output)
+            # nat_loss = criterion(nat_output, target)
+            # print(nat_loss)
+
+            labels = torch.full(size=(input.size()[0], 10), fill_value=0.1).cuda()
+            # print(labels)
+            log_prob = torch.nn.functional.log_softmax(nat_output, dim=1)
+            nat_loss = -torch.sum(log_prob * labels) / args.batch_size
+            loss = nat_loss
+            # print(loss)
+            # exit(0)
+            if args.lr_scheduler == 'cosine_annealing':
+                scheduler.step()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
+
+            if i % args.print_freq == 0:
+                print('Epoch gaussian: [{0}][{1}/{2}]\t'
+                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+                    epoch, i, len(train_loader), batch_time=batch_time,
+                    loss=nat_losses, top1=nat_top1))
         else:
             adv_input = attack_in.perturb(input, target)
             adv_output = model(adv_input)
