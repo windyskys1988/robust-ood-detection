@@ -2,6 +2,7 @@ import argparse
 import os
 
 import sys
+
 sys.path.append("..")
 
 import shutil
@@ -85,7 +86,7 @@ args = parser.parse_args()
 
 state = {k: v for k, v in args._get_kwargs()}
 print(state)
-directory = "checkpoints/%s/"%(args.name)
+directory = "checkpoints/%s/" % (args.name)
 if not os.path.exists(directory):
     os.makedirs(directory)
 save_state_file = os.path.join(directory, 'args.txt')
@@ -95,30 +96,31 @@ fw.close()
 
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-torch.manual_seed(1)
-np.random.seed(1)
+# torch.manual_seed(1)
+# np.random.seed(1)
+
 
 def main():
-    if args.tensorboard: configure("runs/%s"%(args.name))
+    if args.tensorboard: configure("runs/%s" % (args.name))
 
     # Data loading code
-    normalizer = transforms.Normalize(mean=[x/255.0 for x in [125.3, 123.0, 113.9]],
-                                     std=[x/255.0 for x in [63.0, 62.1, 66.7]])
+    normalizer = transforms.Normalize(mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
+                                      std=[x / 255.0 for x in [63.0, 62.1, 66.7]])
 
     if args.augment:
         transform_train = transforms.Compose([
             transforms.RandomCrop(32, padding=4),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
-            ])
+        ])
     else:
         transform_train = transforms.Compose([
             transforms.ToTensor(),
-            ])
+        ])
 
     transform_test = transforms.Compose([
         transforms.ToTensor(),
-        ])
+    ])
 
     kwargs = {'num_workers': 1, 'pin_memory': True}
 
@@ -134,7 +136,7 @@ def main():
     elif args.in_dataset == "CIFAR-100":
         train_loader = torch.utils.data.DataLoader(
             datasets.CIFAR100('../../data', train=True, download=True,
-                             transform=transform_train),
+                              transform=transform_train),
             batch_size=args.batch_size, shuffle=True, **kwargs)
         val_loader = torch.utils.data.DataLoader(
             datasets.CIFAR100('../../data', train=False, transform=transform_test),
@@ -143,19 +145,21 @@ def main():
 
     if args.ood:
         ood_loader = torch.utils.data.DataLoader(
-        TinyImages(transform=transforms.Compose(
-            [transforms.ToTensor(), transforms.ToPILImage(), transforms.RandomCrop(32, padding=4),
-             transforms.RandomHorizontalFlip(), transforms.ToTensor()])),
+            TinyImages(transform=transforms.Compose(
+                [transforms.ToTensor(), transforms.ToPILImage(), transforms.RandomCrop(32, padding=4),
+                 transforms.RandomHorizontalFlip(), transforms.ToTensor()])),
             batch_size=args.ood_batch_size, shuffle=False, **kwargs)
 
     # create model
     model = dn.DenseNet3(args.layers, num_classes, args.growth, reduction=args.reduce,
-                        bottleneck=args.bottleneck, dropRate=args.droprate, normalizer=normalizer)
+                         bottleneck=args.bottleneck, dropRate=args.droprate, normalizer=normalizer)
 
     if args.adv:
-        attack_in = LinfPGDAttack(model = model, eps=args.epsilon, nb_iter=args.iters, eps_iter=args.iter_size, rand_init=True, loss_func='CE')
+        attack_in = LinfPGDAttack(model=model, eps=args.epsilon, nb_iter=args.iters, eps_iter=args.iter_size,
+                                  rand_init=True, loss_func='CE')
         if args.ood:
-            attack_out = LinfPGDAttack(model = model, eps=args.epsilon, nb_iter=args.iters, eps_iter=args.iter_size, rand_init=True, loss_func='OE')
+            attack_out = LinfPGDAttack(model=model, eps=args.epsilon, nb_iter=args.iters, eps_iter=args.iter_size,
+                                       rand_init=True, loss_func='OE')
 
     # get the number of model parameters
     print('Number of model parameters: {}'.format(
@@ -212,7 +216,8 @@ def main():
         # train for one epoch
         if args.ood:
             if args.adv:
-                train_ood(train_loader, ood_loader, model, criterion, ood_criterion, optimizer, scheduler, epoch, attack_in, attack_out)
+                train_ood(train_loader, ood_loader, model, criterion, ood_criterion, optimizer, scheduler, epoch,
+                          attack_in, attack_out)
             else:
                 train_ood(train_loader, ood_loader, model, criterion, ood_criterion, optimizer, scheduler, epoch)
         else:
@@ -231,7 +236,8 @@ def main():
                 'state_dict': model.state_dict(),
             }, epoch + 1)
 
-def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in = None):
+
+def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in=None):
     """Train for one epoch on the training set"""
     batch_time = AverageMeter()
 
@@ -259,22 +265,34 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
         # print(type(nat_input))
         # print(nat_input.size())
 
+        labels = torch.full(size=(input.size()[0], 10), fill_value=0).cuda()
+        labels.scatter_(dim=1, index=torch.unsqueeze(target, dim=1), value=1)
+        # print(labels)
+        # add gaussian
+        num_gaussian_inputs = input.size()[0] // 10
+        # print(input.size())
+        # print(labels.size())
+        gaussian_input = torch.rand((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
+        gaussian_labels = torch.full(size=(num_gaussian_inputs, 10), fill_value=0.1).cuda()
+        cat_input = torch.cat((nat_input, gaussian_input), 0)
+        cat_labels = torch.cat((labels, gaussian_labels), 0)
 
-        nat_output = model(nat_input)
+        # print(nat_input.size())
+        # print(labels.size())
+        # exit(0)
+
+        output = model(cat_input)
         # print(nat_output)
         # nat_loss = criterion(nat_output, target)
         # print(nat_loss)
 
-        labels = torch.full(size=(input.size()[0], 10), fill_value=0).cuda()
-        labels.scatter_(dim=1, index=torch.unsqueeze(target, dim=1), value=1)
-        # print(labels)
-        log_prob = torch.nn.functional.log_softmax(nat_output, dim=1)
-        nat_loss = -torch.sum(log_prob * labels) / args.batch_size
+        log_prob = torch.nn.functional.log_softmax(output, dim=1)
+        nat_loss = -torch.sum(log_prob * cat_labels) / args.batch_size
         # print(loss)
         # exit(0)
 
         # measure accuracy and record loss
-        nat_prec1 = accuracy(nat_output.data, target, topk=(1,))[0]
+        nat_prec1 = accuracy(output.data[:nat_input.size()[0]], target, topk=(1,))[0]
         nat_losses.update(nat_loss.data, input.size(0))
         nat_top1.update(nat_prec1, input.size(0))
 
@@ -296,40 +314,44 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                          epoch, i, len(train_loader), batch_time=batch_time,
-                          loss=nat_losses, top1=nat_top1))
-
-            # gaussian训练
-            gaussian_input = torch.rand(input.size())
-            nat_output = model(gaussian_input)
-            # print(nat_output)
-            # nat_loss = criterion(nat_output, target)
-            # print(nat_loss)
-
-            labels = torch.full(size=(input.size()[0], 10), fill_value=0.1).cuda()
-            # print(labels)
-            log_prob = torch.nn.functional.log_softmax(nat_output, dim=1)
-            nat_loss = -torch.sum(log_prob * labels) / args.batch_size
-            loss = nat_loss
-            # print(loss)
-            # exit(0)
-            if args.lr_scheduler == 'cosine_annealing':
-                scheduler.step()
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            if i % args.print_freq == 0:
-                print('Epoch gaussian: [{0}][{1}/{2}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
                     epoch, i, len(train_loader), batch_time=batch_time,
                     loss=nat_losses, top1=nat_top1))
+
+            # gaussian训练
+
+            # num_gaussian_inputs = input.size()[0] // 10
+            # # print(input.size())
+            # gaussian_input = torch.rand((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
+            # nat_output = model(gaussian_input)
+            # # print(nat_output)
+            # # nat_loss = criterion(nat_output, target)
+            # # print(nat_loss)
+            #
+            # labels = torch.full(size=(num_gaussian_inputs, 10), fill_value=0.1).cuda()
+            # # print(labels)
+            # log_prob = torch.nn.functional.log_softmax(nat_output, dim=1)
+            # nat_loss = -torch.sum(log_prob * labels) / args.batch_size
+            # loss = nat_loss
+            # # print(loss)
+            # # exit(0)
+            # if args.lr_scheduler == 'cosine_annealing':
+            #     scheduler.step()
+            # optimizer.zero_grad()
+            # loss.backward()
+            # optimizer.step()
+            #
+            # # measure elapsed time
+            # batch_time.update(time.time() - end)
+            # end = time.time()
+            #
+            # if i % args.print_freq == 0:
+            #     # print('Epoch gaussian: [{0}][{1}/{2}]\t'
+            #     #       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+            #     #       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+            #     #       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+            #     #     epoch, i, len(train_loader), batch_time=batch_time,
+            #     #     loss=nat_losses, top1=nat_top1))
+            #     print(nat_output[0])
         else:
             adv_input = attack_in.perturb(input, target)
             adv_output = model(adv_input)
@@ -361,8 +383,8 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
                       'Nat Prec@1 {nat_top1.val:.3f} ({nat_top1.avg:.3f})\t'
                       'Adv Loss {adv_loss.val:.4f} ({adv_loss.avg:.4f})\t'
                       'Adv Prec@1 {adv_top1.val:.3f} ({adv_top1.avg:.3f})'.format(
-                          epoch, i, len(train_loader), batch_time=batch_time,
-                          nat_loss=nat_losses, nat_top1=nat_top1, adv_loss=adv_losses, adv_top1=adv_top1))
+                    epoch, i, len(train_loader), batch_time=batch_time,
+                    nat_loss=nat_losses, nat_top1=nat_top1, adv_loss=adv_losses, adv_top1=adv_top1))
 
     # log to TensorBoard
     if args.tensorboard:
@@ -371,7 +393,9 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
         log_value('adv_train_loss', adv_losses.avg, epoch)
         log_value('adv_train_acc', adv_top1.avg, epoch)
 
-def train_ood(train_loader_in, train_loader_out, model, criterion, ood_criterion, optimizer, scheduler, epoch, attack_in = None, attack_out = None):
+
+def train_ood(train_loader_in, train_loader_out, model, criterion, ood_criterion, optimizer, scheduler, epoch,
+              attack_in=None, attack_out=None):
     """Train for one epoch on the training set"""
     batch_time = AverageMeter()
 
@@ -433,8 +457,8 @@ def train_ood(train_loader_in, train_loader_out, model, criterion, ood_criterion
                       'In Loss {in_loss.val:.4f} ({in_loss.avg:.4f})\t'
                       'Out Loss {out_loss.val:.4f} ({out_loss.avg:.4f})\t'
                       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                          epoch, i, len(train_loader_in), batch_time=batch_time,
-                          in_loss=nat_in_losses, out_loss=nat_out_losses, top1=nat_top1))
+                    epoch, i, len(train_loader_in), batch_time=batch_time,
+                    in_loss=nat_in_losses, out_loss=nat_out_losses, top1=nat_top1))
         else:
             adv_in_input = attack_in.perturb(in_set[0], target)
 
@@ -482,9 +506,9 @@ def train_ood(train_loader_in, train_loader_out, model, criterion, ood_criterion
                       'Adv In Loss {adv_in_loss.val:.4f} ({adv_in_loss.avg:.4f})\t'
                       'Adv Out Loss {adv_out_loss.val:.4f} ({adv_out_loss.avg:.4f})\t'
                       'Adv Prec@1 {adv_top1.val:.3f} ({adv_top1.avg:.3f})'.format(
-                          epoch, i, len(train_loader_in), batch_time=batch_time,
-                          nat_in_loss=nat_in_losses, nat_out_loss=nat_out_losses, nat_top1=nat_top1,
-                          adv_in_loss=adv_in_losses, adv_out_loss=adv_out_losses, adv_top1=adv_top1))
+                    epoch, i, len(train_loader_in), batch_time=batch_time,
+                    nat_in_loss=nat_in_losses, nat_out_loss=nat_out_losses, nat_top1=nat_top1,
+                    adv_in_loss=adv_in_losses, adv_out_loss=adv_out_losses, adv_top1=adv_top1))
 
     # log to TensorBoard
     if args.tensorboard:
@@ -492,6 +516,7 @@ def train_ood(train_loader_in, train_loader_out, model, criterion, ood_criterion
         log_value('nat_train_acc', nat_top1.avg, epoch)
         log_value('adv_train_loss', adv_losses.avg, epoch)
         log_value('adv_train_acc', adv_top1.avg, epoch)
+
 
 def validate(val_loader, model, criterion, epoch):
     """Perform validation on the validation set"""
@@ -523,8 +548,8 @@ def validate(val_loader, model, criterion, epoch):
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                      i, len(val_loader), batch_time=batch_time, loss=losses,
-                      top1=top1))
+                i, len(val_loader), batch_time=batch_time, loss=losses,
+                top1=top1))
 
     print(' * Prec@1 {top1.avg:.3f}'.format(top1=top1))
     # log to TensorBoard
@@ -536,11 +561,12 @@ def validate(val_loader, model, criterion, epoch):
 
 def save_checkpoint(state, epoch):
     """Saves checkpoint to disk"""
-    directory = "checkpoints/%s/"%(args.name)
+    directory = "checkpoints/%s/" % (args.name)
     if not os.path.exists(directory):
         os.makedirs(directory)
     filename = directory + 'checkpoint_{}.pth.tar'.format(epoch)
     torch.save(state, filename)
+
 
 class OELoss(nn.Module):
     def __init__(self):
@@ -549,8 +575,10 @@ class OELoss(nn.Module):
     def forward(self, x):
         return -(x.mean(1) - torch.logsumexp(x, dim=1)).mean()
 
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -566,9 +594,11 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
 def cosine_annealing(step, total_steps, lr_max, lr_min):
     return lr_min + (lr_max - lr_min) * 0.5 * (
             1 + np.cos(step / total_steps * np.pi))
+
 
 def adjust_learning_rate(optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 10 after 40 and 80 epochs"""
@@ -586,6 +616,7 @@ def adjust_learning_rate(optimizer, epoch):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
+
 def accuracy(output, target, topk=(1,)):
     """Computes the precision@k for the specified values of k"""
     maxk = max(topk)
@@ -600,6 +631,7 @@ def accuracy(output, target, topk=(1,)):
         correct_k = correct[:k].view(-1).float().sum(0)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
+
 
 if __name__ == '__main__':
     main()

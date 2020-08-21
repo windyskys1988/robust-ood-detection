@@ -96,8 +96,8 @@ fw.close()
 
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-torch.manual_seed(1)
-np.random.seed(1)
+# torch.manual_seed(1)
+# np.random.seed(1)
 
 
 def main():

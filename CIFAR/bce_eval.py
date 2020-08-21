@@ -81,7 +81,8 @@ def tesnsor_stat(tag, arr):
 
 
 def ODIN(inputs, outputs, model, temper, noiseMagnitude1):
-    print(outputs)
+    # print(inputs)
+    # print(outputs)
     # print(torch.sigmoid(outputs))
     # return 0
     # Calculating the perturbation we need to add, that is,
@@ -106,7 +107,7 @@ def ODIN(inputs, outputs, model, temper, noiseMagnitude1):
     loss.backward()
 
     # Normalizing the gradient to binary in {0, 1}
-    gradient = inputs.grad.data * (-10.0) # 5000 best
+    gradient = inputs.grad.data * (-10.0)  # 5000 best
     tesnsor_stat('grad', gradient)
     # gradient = torch.ge(inputs.grad.data, 0)
     # gradient = (gradient.float() - 0.5) * 2
@@ -167,7 +168,7 @@ def eval_mahalanobis(sample_mean, precision, regressor, magnitude):
         trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
         testset = torchvision.datasets.CIFAR10(root='../../data', train=False, download=True, transform=transform)
-        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=2)
 
         num_classes = 10
     elif args.in_dataset == "CIFAR-100":
@@ -176,7 +177,7 @@ def eval_mahalanobis(sample_mean, precision, regressor, magnitude):
 
         testset = torchvision.datasets.CIFAR100(root='../../data', train=False, download=True,
                                                 transform=transform)
-        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=2)
 
         num_classes = 100
 
@@ -193,26 +194,26 @@ def eval_mahalanobis(sample_mean, precision, regressor, magnitude):
         testsetout = svhn.SVHN('datasets/ood_datasets/svhn/', split='test',
                                transform=transforms.ToTensor(), download=False)
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size,
-                                                    shuffle=True, num_workers=2)
+                                                    shuffle=False, num_workers=2)
     elif args.out_dataset == 'dtd':
         testsetout = torchvision.datasets.ImageFolder(root="datasets/ood_datasets/dtd/images",
                                                       transform=transforms.Compose(
                                                           [transforms.Resize(32), transforms.CenterCrop(32),
                                                            transforms.ToTensor()]))
-        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
+        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=False,
                                                     num_workers=2)
     elif args.out_dataset == 'places365':
         testsetout = torchvision.datasets.ImageFolder(root="datasets/ood_datasets/places365/test_subset",
                                                       transform=transforms.Compose(
                                                           [transforms.Resize(32), transforms.CenterCrop(32),
                                                            transforms.ToTensor()]))
-        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
+        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=False,
                                                     num_workers=2)
     else:
         testsetout = torchvision.datasets.ImageFolder("./datasets/ood_datasets/{}".format(args.out_dataset),
                                                       transform=transform)
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size,
-                                                    shuffle=True, num_workers=2)
+                                                    shuffle=False, num_workers=2)
 
     # set information about feature extaction
     temp_x = torch.rand(2, 3, 32, 32)
@@ -408,6 +409,7 @@ def eval_msp_and_odin():
         for k in range(batch_size):
             f1.write("{}\n".format(np.max(nnOutputs[k])))
 
+        torch.save(outputs, args.name + '_in.pth')
         nnOutputs = ODIN(inputs, outputs, model, temper=args.temperature, noiseMagnitude1=args.magnitude)
 
         for k in range(batch_size):
@@ -439,13 +441,15 @@ def eval_msp_and_odin():
         else:
             inputs = Variable(images, requires_grad=True)
 
+        # print(inputs.size())
         outputs = model(inputs)
-
+        # print(outputs.size())
         nnOutputs = MSP(outputs, model)
 
         for k in range(batch_size):
             f2.write("{}\n".format(np.max(nnOutputs[k])))
 
+        torch.save(outputs, args.name + '_' + args.out_dataset + '_out.pth')
         nnOutputs = ODIN(inputs, outputs, model, temper=args.temperature, noiseMagnitude1=args.magnitude)
 
         for k in range(batch_size):
