@@ -19,12 +19,14 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision
 import numpy as np
+from torch.autograd import Variable
+import matplotlib.pyplot as plt
 
 import models.densenet as dn
 from utils import LinfPGDAttack, TinyImages
 
 # used for logging to TensorBoard
-from tensorboard_logger import configure, log_value
+# from tensorboard_logger import configure, log_value
 
 parser = argparse.ArgumentParser(description='PyTorch DenseNet Training')
 parser.add_argument('--gpu', default='0', type=str, help='which gpu to use')
@@ -74,7 +76,7 @@ parser.add_argument('--no-bottleneck', dest='bottleneck', action='store_false',
                     help='To not use bottleneck block')
 parser.add_argument('--resume', default='', type=str,
                     help='path to latest checkpoint (default: none)')
-
+parser.add_argument('--lmd', default=0.9, type=float, help='parameter lambda: weight of loss and KL')
 parser.add_argument('--name', required=True, type=str,
                     help='name of experiment')
 parser.add_argument('--tensorboard',
@@ -96,9 +98,9 @@ fw.close()
 
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
+
 # torch.manual_seed(1)
 # np.random.seed(1)
-
 
 def main():
     if args.tensorboard: configure("runs/%s" % (args.name))
@@ -109,8 +111,8 @@ def main():
 
     if args.augment:
         transform_train = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
+            # transforms.RandomCrop(32, padding=4),
+            # transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
         ])
     else:
@@ -154,6 +156,9 @@ def main():
     model = dn.DenseNet3(args.layers, num_classes, args.growth, reduction=args.reduce,
                          bottleneck=args.bottleneck, dropRate=args.droprate, normalizer=normalizer)
 
+    model2 = dn.DenseNet3(args.layers, num_classes, args.growth, reduction=args.reduce,
+                          bottleneck=args.bottleneck, dropRate=args.droprate, normalizer=normalizer)
+
     if args.adv:
         attack_in = LinfPGDAttack(model=model, eps=args.epsilon, nb_iter=args.iters, eps_iter=args.iter_size,
                                   rand_init=True, loss_func='CE')
@@ -169,6 +174,7 @@ def main():
     # Use CUDA_VISIBLE_DEVICES=0,1 to specify which GPUs to use
     # model = torch.nn.DataParallel(model).cuda()
     model = model.cuda()
+    model2 = model2.cuda()
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -177,6 +183,7 @@ def main():
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
             model.load_state_dict(checkpoint['state_dict'])
+            model2.load_state_dict(checkpoint['state_dict2'])
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
@@ -190,7 +197,7 @@ def main():
     if args.ood:
         ood_criterion = OELoss().cuda()
 
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
+    optimizer = torch.optim.SGD(list(model.parameters()) + list(model2.parameters()), args.lr,
                                 momentum=args.momentum,
                                 nesterov=True,
                                 weight_decay=args.weight_decay)
@@ -213,18 +220,7 @@ def main():
         if args.lr_scheduler == 'step_decay':
             adjust_learning_rate(optimizer, epoch)
 
-        # train for one epoch
-        if args.ood:
-            if args.adv:
-                train_ood(train_loader, ood_loader, model, criterion, ood_criterion, optimizer, scheduler, epoch,
-                          attack_in, attack_out)
-            else:
-                train_ood(train_loader, ood_loader, model, criterion, ood_criterion, optimizer, scheduler, epoch)
-        else:
-            if args.adv:
-                train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in)
-            else:
-                train(train_loader, model, criterion, optimizer, scheduler, epoch)
+        train(train_loader, model, model2, criterion, optimizer, scheduler, epoch)
 
         # evaluate on validation set
         prec1 = validate(val_loader, model, criterion, epoch)
@@ -234,167 +230,82 @@ def main():
             save_checkpoint({
                 'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
+                'state_dict2': model2.state_dict(),
             }, epoch + 1)
 
 
-def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in=None):
+def train(train_loader, model, model2, criterion, optimizer, scheduler, epoch, attack_in=None):
     """Train for one epoch on the training set"""
     batch_time = AverageMeter()
 
     nat_losses = AverageMeter()
     nat_top1 = AverageMeter()
 
-    adv_losses = AverageMeter()
-    adv_top1 = AverageMeter()
+    nat_losses2 = AverageMeter()
+    nat_top2 = AverageMeter()
 
     # switch to train mode
+
+    model2.train()
     model.train()
 
     end = time.time()
     for i, (input, target) in enumerate(train_loader):
         target = target.cuda()
-        # print(target)
-        # print(target.size())
-        # add_num = int(target.size()[0] / 7)
-        # print(add_num)
 
-        # print(type(input))
-        # print(input.size())
+        add_num = int(target.size()[0] / 7)
+
         nat_input = input.detach().clone()
 
-        # print(type(nat_input))
-        # print(nat_input.size())
+        nat_output = model(nat_input)
+        nat_loss = criterion(nat_output, target)
+        nat_output2 = model2(nat_input)
+        nat_loss2 = criterion(nat_output2, target)
 
-        labels = torch.full(size=(input.size()[0], 10), fill_value=0).cuda()
-        labels.scatter_(dim=1, index=torch.unsqueeze(target, dim=1), value=1)
-        # print(labels)
-        # add gaussian
-        num_gaussian_inputs = input.size()[0] // 10
-        # print(input.size())
-        # print(labels.size())
-        # 均一噪声
-        # gaussian_input = torch.rand((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
-        # 标准高斯噪声
-        gaussian_input = torch.randn((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
-        gaussian_labels = torch.full(size=(num_gaussian_inputs, 10), fill_value=0.1).cuda()
-        cat_input = torch.cat((nat_input, gaussian_input), 0)
-        cat_labels = torch.cat((labels, gaussian_labels), 0)
-
-        # print(nat_input.size())
-        # print(labels.size())
-        # exit(0)
-
-        output = model(cat_input)
-        # print(nat_output)
-        # loss = criterion(output, target)
-        # print(loss)
-
-        log_prob = torch.nn.functional.log_softmax(output, dim=1)
-        nat_loss = -torch.sum(log_prob * cat_labels) / args.batch_size
-        # print(nat_loss)
-        # exit(0)
+        # otkl = F.kl_div(F.softmax(nat_output, dim=1), F.softmax(nat_output2, dim=1), reduce=False)
+        # tokl = F.kl_div(F.softmax(nat_output2, dim=1), F.softmax(nat_output, dim=1), reduce=False)
+        # 订正版 dis3g
+        otkl = F.kl_div(F.log_softmax(nat_output, dim=1), F.softmax(nat_output2, dim=1), reduction='none')
+        tokl = F.kl_div(F.log_softmax(nat_output2, dim=1), F.softmax(nat_output, dim=1), reduction='none')
 
         # measure accuracy and record loss
-        nat_prec1 = accuracy(output.data[:nat_input.size()[0]], target, topk=(1,))[0]
+        nat_prec1 = accuracy(nat_output.data, target, topk=(1,))[0]
         nat_losses.update(nat_loss.data, input.size(0))
         nat_top1.update(nat_prec1, input.size(0))
 
-        if not args.adv:
-            # compute gradient and do SGD step
-            loss = nat_loss
-            if args.lr_scheduler == 'cosine_annealing':
-                scheduler.step()
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        nat_prec2 = accuracy(nat_output2.data, target, topk=(1,))[0]
+        nat_losses2.update(nat_loss2.data, input.size(0))
+        nat_top2.update(nat_prec2, input.size(0))
 
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
+        lmd = args.lmd
+        kl2 = torch.abs(torch.mean(torch.sum(otkl, dim=1))) + torch.abs(torch.mean(torch.sum(tokl, dim=1)))
+        loss = lmd * (nat_loss2 + nat_loss) + (1 - lmd) * kl2
+        # loss1 = lmd * nat_loss + (1 - lmd) * (
+        #         torch.mean(torch.sum(otkl, dim=1)) + torch.mean(torch.sum(tokl, dim=1)))
+        # loss2 = lmd * nat_loss2 + (1 - lmd) * (
+        #         torch.mean(torch.sum(otkl, dim=1)) + torch.mean(torch.sum(tokl, dim=1)))
 
-            if i % args.print_freq == 0:
-                print('Epoch: [{0}][{1}/{2}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                    epoch, i, len(train_loader), batch_time=batch_time,
-                    loss=nat_losses, top1=nat_top1))
+        # print(loss1)
+        # print(loss2)
+        # exit(0)
+        if args.lr_scheduler == 'cosine_annealing':
+            scheduler.step()
+        optimizer.zero_grad()
+        loss.backward()
+        # loss2.backward()
+        optimizer.step()
 
-            # gaussian训练
+        # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
 
-            # num_gaussian_inputs = input.size()[0] // 10
-            # # print(input.size())
-            # gaussian_input = torch.rand((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
-            # nat_output = model(gaussian_input)
-            # # print(nat_output)
-            # # nat_loss = criterion(nat_output, target)
-            # # print(nat_loss)
-            #
-            # labels = torch.full(size=(num_gaussian_inputs, 10), fill_value=0.1).cuda()
-            # # print(labels)
-            # log_prob = torch.nn.functional.log_softmax(nat_output, dim=1)
-            # nat_loss = -torch.sum(log_prob * labels) / args.batch_size
-            # loss = nat_loss
-            # # print(loss)
-            # # exit(0)
-            # if args.lr_scheduler == 'cosine_annealing':
-            #     scheduler.step()
-            # optimizer.zero_grad()
-            # loss.backward()
-            # optimizer.step()
-            #
-            # # measure elapsed time
-            # batch_time.update(time.time() - end)
-            # end = time.time()
-            #
-            # if i % args.print_freq == 0:
-            #     # print('Epoch gaussian: [{0}][{1}/{2}]\t'
-            #     #       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-            #     #       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-            #     #       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-            #     #     epoch, i, len(train_loader), batch_time=batch_time,
-            #     #     loss=nat_losses, top1=nat_top1))
-            #     print(nat_output[0])
-        else:
-            adv_input = attack_in.perturb(input, target)
-            adv_output = model(adv_input)
-            adv_loss = criterion(adv_output, target)
-
-            # measure accuracy and record loss
-            adv_prec1 = accuracy(adv_output.data, target, topk=(1,))[0]
-            adv_losses.update(adv_loss.data, input.size(0))
-            adv_top1.update(adv_prec1, input.size(0))
-
-            # compute gradient and do SGD step
-            loss = adv_loss
-
-            if args.lr_scheduler == 'cosine_annealing':
-                scheduler.step()
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            if i % args.print_freq == 0:
-                print('Epoch: [{0}][{1}/{2}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Nat Loss {nat_loss.val:.4f} ({nat_loss.avg:.4f})\t'
-                      'Nat Prec@1 {nat_top1.val:.3f} ({nat_top1.avg:.3f})\t'
-                      'Adv Loss {adv_loss.val:.4f} ({adv_loss.avg:.4f})\t'
-                      'Adv Prec@1 {adv_top1.val:.3f} ({adv_top1.avg:.3f})'.format(
-                    epoch, i, len(train_loader), batch_time=batch_time,
-                    nat_loss=nat_losses, nat_top1=nat_top1, adv_loss=adv_losses, adv_top1=adv_top1))
-
-    # log to TensorBoard
-    if args.tensorboard:
-        log_value('nat_train_loss', nat_losses.avg, epoch)
-        log_value('nat_train_acc', nat_top1.avg, epoch)
-        log_value('adv_train_loss', adv_losses.avg, epoch)
-        log_value('adv_train_acc', adv_top1.avg, epoch)
+        if i % args.print_freq == 0:
+            print('Epoch: [{0}][{1}/{2}] kl {3:.4f}\t'
+                  'Loss1 {loss1.val:.4f} ({loss1.avg:.4f})\t'
+                  'Loss2 {loss2.val:.4f} ({loss2.avg:.4f})\t'
+                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+                  'Prec2@1 {top2.val:.3f} ({top2.avg:.3f})'.format(
+                epoch, i, len(train_loader), kl2, loss1=nat_losses, loss2=nat_losses2, top1=nat_top1, top2=nat_top2))
 
 
 def train_ood(train_loader_in, train_loader_out, model, criterion, ood_criterion, optimizer, scheduler, epoch,

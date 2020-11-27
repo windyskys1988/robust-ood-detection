@@ -103,44 +103,38 @@ def eval_acc():
     criterion = nn.CrossEntropyLoss()
 
     for i, (input, target) in enumerate(testloaderIn):
+        target = target.cuda()
 
-        noise_input = torch.rand(input.size())
-        # noise_input = torch.randn(input.size())
+        add_num = int(target.size()[0] / 7)
 
-        noise_output = model(noise_input)
+        nat_input = input.detach().clone()
 
-        noise_score = noise_output.softmax(axis=1).max(axis=1)
+        nat_output = model(nat_input)
+        nat_loss = criterion(nat_output, target)
 
-        # noise_pred = noise_output.argmax(axis=1)
+        # measure accuracy and record loss
+        nat_prec1 = accuracy(nat_output.data, target, topk=(1,))[0]
+        nat_losses.update(nat_loss.data, input.size(0))
+        nat_top1.update(nat_prec1, input.size(0))
 
-        print(noise_score)
-        # print(noise_pred)
-        exit(0)
-        # nat_loss = criterion(nat_output, target)
+        # # compute gradient and do SGD step
+        # loss = nat_loss
+        # if args.lr_scheduler == 'cosine_annealing':
+        #     scheduler.step()
+        # optimizer.zero_grad()
+        # loss.backward()
+        # optimizer.step()
         #
-        # # measure accuracy and record loss
-        # nat_prec1 = accuracy(nat_output.data, target, topk=(1,))[0]
-        # nat_losses.update(nat_loss.data, input.size(0))
-        # nat_top1.update(nat_prec1, input.size(0))
-        #
-        # # # compute gradient and do SGD step
-        # # loss = nat_loss
-        # # if args.lr_scheduler == 'cosine_annealing':
-        # #     scheduler.step()
-        # # optimizer.zero_grad()
-        # # loss.backward()
-        # # optimizer.step()
-        # #
-        # # # measure elapsed time
-        # # batch_time.update(time.time() - end)
-        # # end = time.time()
-        #
-        # if i % args.print_freq == 0 or i == len(testloaderIn) - 1:
-        #     print('Epoch: [{0}/{1}]\t'
-        #           'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-        #           'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-        #         i, len(testloaderIn),
-        #         loss=nat_losses, top1=nat_top1))
+        # # measure elapsed time
+        # batch_time.update(time.time() - end)
+        # end = time.time()
+
+        if i % args.print_freq == 0 or i == len(testloaderIn) - 1:
+            print('Epoch: [{0}/{1}]\t'
+                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+                i, len(testloaderIn),
+                loss=nat_losses, top1=nat_top1))
 
 
 class AverageMeter(object):

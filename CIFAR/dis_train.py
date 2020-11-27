@@ -19,12 +19,14 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision
 import numpy as np
+from torch.autograd import Variable
+import matplotlib.pyplot as plt
 
 import models.densenet as dn
 from utils import LinfPGDAttack, TinyImages
 
 # used for logging to TensorBoard
-from tensorboard_logger import configure, log_value
+# from tensorboard_logger import configure, log_value
 
 parser = argparse.ArgumentParser(description='PyTorch DenseNet Training')
 parser.add_argument('--gpu', default='0', type=str, help='which gpu to use')
@@ -75,6 +77,7 @@ parser.add_argument('--no-bottleneck', dest='bottleneck', action='store_false',
 parser.add_argument('--resume', default='', type=str,
                     help='path to latest checkpoint (default: none)')
 
+parser.add_argument('--lmd', default=0.9, type=float, help='parameter lambda: weight of loss and KL')
 parser.add_argument('--name', required=True, type=str,
                     help='name of experiment')
 parser.add_argument('--tensorboard',
@@ -96,9 +99,9 @@ fw.close()
 
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
+
 # torch.manual_seed(1)
 # np.random.seed(1)
-
 
 def main():
     if args.tensorboard: configure("runs/%s" % (args.name))
@@ -109,8 +112,8 @@ def main():
 
     if args.augment:
         transform_train = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
+            # transforms.RandomCrop(32, padding=4),
+            # transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
         ])
     else:
@@ -253,55 +256,65 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
     end = time.time()
     for i, (input, target) in enumerate(train_loader):
         target = target.cuda()
-        # print(target)
-        # print(target.size())
-        # add_num = int(target.size()[0] / 7)
-        # print(add_num)
 
-        # print(type(input))
-        # print(input.size())
+        add_num = int(target.size()[0] / 7)
+
         nat_input = input.detach().clone()
 
-        # print(type(nat_input))
-        # print(nat_input.size())
+        # # 缩小变化 初值[[1.1, 0., 0.], [0., 1.1, 0.]] -> [[1.0, 0., 0.], [0., 1.0, 0.]]
+        # tfparam = np.array([[1.05, 0., 0.], [0., 1.05, 0.]])
+        tfparam = np.array([[1.05, -0.1, 0.4], [0.03, 1.05, 0.4]])
+        # # 缩小变化 最后 * 0.1
+        # tfseed = (np.random.rand(2, 3) - 0.5) * np.array([[0.2, 0.2, 6], [0.2, 0.2, 6]]) * 0.4
+        # # result_large
+        # # tfparam = np.array([[1.2, 0., 0.], [0., 1.2, 0.]])
+        # # tfseed = (np.random.rand(2, 3) - 0.5) * np.array([[0.2, 0.2, 6], [0.2, 0.2, 6]]) * 1.3
+        # tfparam += tfseed
+        # print(tfparam)
+        affine_param = torch.from_numpy(tfparam).float()
+        # print(affine_param.size())
+        p2 = nat_input.size()
+        # print(p2)
+        # print(p2[0])
+        p1 = affine_param.repeat(p2[0], 1, 1)
 
-        labels = torch.full(size=(input.size()[0], 10), fill_value=0).cuda()
-        labels.scatter_(dim=1, index=torch.unsqueeze(target, dim=1), value=1)
-        # print(labels)
-        # add gaussian
-        num_gaussian_inputs = input.size()[0] // 10
-        # print(input.size())
-        # print(labels.size())
-        # 均一噪声
-        # gaussian_input = torch.rand((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
-        # 标准高斯噪声
-        gaussian_input = torch.randn((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
-        gaussian_labels = torch.full(size=(num_gaussian_inputs, 10), fill_value=0.1).cuda()
-        cat_input = torch.cat((nat_input, gaussian_input), 0)
-        cat_labels = torch.cat((labels, gaussian_labels), 0)
+        # print(p1)
 
-        # print(nat_input.size())
-        # print(labels.size())
+        grid = F.affine_grid(p1, p2)
+        trans_data = F.grid_sample(nat_input, grid)
+        nat_trans_input = Variable(trans_data.data.cpu().cuda(0), requires_grad=True)
+
+        # print(torch.sum(nat_input-nat_trans_input))
+        # trans_images = torchvision.utils.make_grid(nat_trans_input).detach().numpy().transpose(1, 2, 0)
+        # plt.imshow(trans_images)
+        # plt.show()
         # exit(0)
 
-        output = model(cat_input)
-        # print(nat_output)
-        # loss = criterion(output, target)
-        # print(loss)
-
-        log_prob = torch.nn.functional.log_softmax(output, dim=1)
-        nat_loss = -torch.sum(log_prob * cat_labels) / args.batch_size
-        # print(nat_loss)
+        nat_output = model(nat_input)
+        trans_output = model(nat_trans_input)
+        nat_loss = criterion(nat_output, target)
+        trans_loss = criterion(trans_output, target)
+        # 旧版效果好？ dis1及dis1l
+        # otkl = F.kl_div(F.softmax(nat_output, dim=1), F.softmax(trans_output, dim=1), reduce=False)
+        # tokl = F.kl_div(F.softmax(trans_output, dim=1), F.softmax(nat_output, dim=1), reduce=False)
+        # 订正版 dis1g
+        otkl = F.kl_div(F.log_softmax(nat_output, dim=1), F.softmax(trans_output, dim=1), reduction='none')
+        tokl = F.kl_div(F.log_softmax(trans_output, dim=1), F.softmax(nat_output, dim=1), reduction='none')
+        # print(otkl.size())
+        # print(torch.sum(otkl, dim=1))
+        # print(torch.mean(torch.sum(tokl, dim=1)))
         # exit(0)
+        lmd = args.lmd
 
         # measure accuracy and record loss
-        nat_prec1 = accuracy(output.data[:nat_input.size()[0]], target, topk=(1,))[0]
+        nat_prec1 = accuracy(nat_output.data, target, topk=(1,))[0]
         nat_losses.update(nat_loss.data, input.size(0))
         nat_top1.update(nat_prec1, input.size(0))
 
         if not args.adv:
-            # compute gradient and do SGD step
-            loss = nat_loss
+            kl2 = torch.mean(torch.sum(otkl, dim=1)) + torch.mean(torch.sum(tokl, dim=1))
+
+            loss = lmd * (nat_loss + trans_loss) + (1 - lmd) * kl2
             if args.lr_scheduler == 'cosine_annealing':
                 scheduler.step()
             optimizer.zero_grad()
@@ -313,48 +326,16 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
             end = time.time()
 
             if i % args.print_freq == 0:
-                print('Epoch: [{0}][{1}/{2}]\t'
+                # print(nat_loss)
+                # print(trans_loss)
+                # print(lmd)
+                # print(kl2)
+                print('Epoch: [{0}][{1}/{2}] loss {3:.3f} kl {4:.3f}\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                    epoch, i, len(train_loader), batch_time=batch_time,
+                    epoch, i, len(train_loader), loss, kl2, batch_time=batch_time,
                     loss=nat_losses, top1=nat_top1))
-
-            # gaussian训练
-
-            # num_gaussian_inputs = input.size()[0] // 10
-            # # print(input.size())
-            # gaussian_input = torch.rand((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
-            # nat_output = model(gaussian_input)
-            # # print(nat_output)
-            # # nat_loss = criterion(nat_output, target)
-            # # print(nat_loss)
-            #
-            # labels = torch.full(size=(num_gaussian_inputs, 10), fill_value=0.1).cuda()
-            # # print(labels)
-            # log_prob = torch.nn.functional.log_softmax(nat_output, dim=1)
-            # nat_loss = -torch.sum(log_prob * labels) / args.batch_size
-            # loss = nat_loss
-            # # print(loss)
-            # # exit(0)
-            # if args.lr_scheduler == 'cosine_annealing':
-            #     scheduler.step()
-            # optimizer.zero_grad()
-            # loss.backward()
-            # optimizer.step()
-            #
-            # # measure elapsed time
-            # batch_time.update(time.time() - end)
-            # end = time.time()
-            #
-            # if i % args.print_freq == 0:
-            #     # print('Epoch gaussian: [{0}][{1}/{2}]\t'
-            #     #       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-            #     #       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-            #     #       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-            #     #     epoch, i, len(train_loader), batch_time=batch_time,
-            #     #     loss=nat_losses, top1=nat_top1))
-            #     print(nat_output[0])
         else:
             adv_input = attack_in.perturb(input, target)
             adv_output = model(adv_input)
