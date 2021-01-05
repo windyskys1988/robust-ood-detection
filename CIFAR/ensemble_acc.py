@@ -15,6 +15,7 @@ import torchvision.transforms as transforms
 import models.densenet as dn
 import numpy as np
 import time
+import torch.nn.functional as F
 
 parser = argparse.ArgumentParser(description='Pytorch Detecting Out-of-distribution examples in neural networks')
 
@@ -46,7 +47,6 @@ os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 torch.manual_seed(1)
 torch.cuda.manual_seed(1)
 np.random.seed(1)
-
 
 
 def tesnsor_stat(tag, arr):
@@ -102,39 +102,49 @@ def eval_acc():
     # output = model(gaussian_inputs)
     criterion = nn.CrossEntropyLoss()
 
+    tfparams = np.array([
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.1]],
+        [[1.0, 0.0, 0.1], [0.0, 1.0, 0.0]],
+        [[1.0, 0.0, 0.0], [0.0, 1.0, -0.1]],
+        [[1.0, 0.0, -0.1], [0.0, 1.0, 0.0]],
+        [[1.1, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        [[1.0, 0.0, 0.0], [0.0, 1.1, 0.0]],
+        [[0.9, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        [[1.0, 0.0, 0.0], [0.0, 0.9, 0.0]],
+        [[1.0, 0.1, 0.0], [0.0, 1.0, 0.0]],
+        [[1.0, 0.0, 0.0], [0.1, 1.0, 0.0]],
+        [[1.0, -0.1, 0.0], [0.0, 1.0, 0.0]],
+        [[1.0, 0.0, 0.0], [-0.1, 1.0, 0.0]],
+    ])
+
+    affine_params = torch.from_numpy(tfparams).float()
+    # print(affine_params.size())
+    # for j, affine_param in enumerate(affine_params):
+    #     print(j,affine_param.size())
+    #     print(affine_param)
+
+    trans_loss = [AverageMeter() for _ in range(affine_params.size()[0])]
+    trans_top = [AverageMeter() for _ in range(affine_params.size()[0])]
+    # for i in range(affine_params.size()[0]):
+    #     nat_loss[i] = AverageMeter()
+    #     nat_top[i] = AverageMeter()
+    sum_loss = AverageMeter()
+    sum_top = AverageMeter()
+
     for i, (input, target) in enumerate(testloaderIn):
-
-        noise_input = torch.rand(input.size())
-        # noise_input = torch.randn(input.size())
-
-        noise_output = model(noise_input)
-
-        # noise_score = noise_output.softmax(axis=1).max(axis=1)
-
-        # noise_pred = noise_output.argmax(axis=1)
-
-        # print(noise_score)
-        # print(noise_pred)
-        # exit(0)
         target = target.cuda()
-        nat_loss = criterion(noise_output, target)
+
+        add_num = int(target.size()[0] / 7)
+
+        nat_input = input.detach().clone()
+
+        nat_output = model(nat_input)
+        nat_loss = criterion(nat_output, target)
 
         # measure accuracy and record loss
-        nat_prec1 = accuracy(noise_output.data, target, topk=(1,))[0]
+        nat_prec1 = accuracy(nat_output.data, target, topk=(1,))[0]
         nat_losses.update(nat_loss.data, input.size(0))
         nat_top1.update(nat_prec1, input.size(0))
-
-        # # compute gradient and do SGD step
-        # loss = nat_loss
-        # if args.lr_scheduler == 'cosine_annealing':
-        #     scheduler.step()
-        # optimizer.zero_grad()
-        # loss.backward()
-        # optimizer.step()
-        #
-        # # measure elapsed time
-        # batch_time.update(time.time() - end)
-        # end = time.time()
 
         if i % args.print_freq == 0 or i == len(testloaderIn) - 1:
             print('Epoch: [{0}/{1}]\t'
@@ -142,6 +152,59 @@ def eval_acc():
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
                 i, len(testloaderIn),
                 loss=nat_losses, top1=nat_top1))
+
+        affine_outputs = []
+        for j, affine_param in enumerate(affine_params):
+            # print(affine_param)
+            p2 = nat_input.size()
+            p1 = affine_param.repeat(p2[0], 1, 1)
+
+            grid = F.affine_grid(p1, p2)
+            trans_data = F.grid_sample(nat_input, grid,padding_mode='reflection')
+            trans_input = Variable(trans_data.data.cpu().cuda(0), requires_grad=True)
+
+            output2 = model(trans_input)
+            affine_outputs.append(output2)
+            # affine_outputs = torch.stack((affine_outputs,output2))
+            # print(F.softmax(output2, dim=1))
+            loss = criterion(output2, target)
+
+            # measure accuracy and record loss
+            nat_prec1 = accuracy(output2.data, target, topk=(1,))[0]
+            trans_loss[j].update(loss.data, input.size(0))
+            trans_top[j].update(nat_prec1, input.size(0))
+
+            if i % args.print_freq == 0 or i == len(testloaderIn) - 1:
+                print('Affine {j} Epoch: [{0}/{1}]\t'
+                      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+                    i, len(testloaderIn),
+                    loss=trans_loss[j], top1=trans_top[j], j=j))
+
+        # print(nat_output)
+        # for k in range(len(affine_outputs)):
+        #     print(affine_outputs[k])
+
+        affine_outputs = torch.stack(affine_outputs)
+        # print(affine_outputs.size())
+        affine_outputs_sum = torch.sum(affine_outputs,dim=0)
+        # print(affine_outputs_sum.size())
+        # print(affine_outputs_sum)
+
+
+        loss = criterion(affine_outputs_sum, target)
+        nat_prec1 = accuracy(affine_outputs_sum.data, target, topk=(1,))[0]
+        sum_loss.update(loss.data, input.size(0))
+        sum_top.update(nat_prec1, input.size(0))
+
+        if i % args.print_freq == 0 or i == len(testloaderIn) - 1:
+            print('Affine sum Epoch: [{0}/{1}]\t'
+                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+                i, len(testloaderIn),
+                loss=sum_loss, top1=sum_top))
+
+        # exit(0)
 
 
 class AverageMeter(object):
