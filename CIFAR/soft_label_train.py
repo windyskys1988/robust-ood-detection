@@ -5,7 +5,6 @@ import sys
 
 sys.path.append("..")
 
-import shutil
 import time
 
 import torch
@@ -25,6 +24,60 @@ from utils import LinfPGDAttack, TinyImages
 
 # used for logging to TensorBoard
 from tensorboard_logger import configure, log_value
+from PIL import Image
+
+
+class expandedCIFAR10(datasets.CIFAR10):
+    def __init__(self, root, train=True, transform=None, target_transform=None,
+                 download=False):
+
+        super(expandedCIFAR10, self).__init__(root, transform=transform,
+                                              target_transform=target_transform)
+
+        self.one_hot_like_labels = np.eye(10)[self.targets]
+
+        expand_data = []
+        expand_targets = []
+
+        # now load the picked numpy arrays
+        for i in range(4):
+            images = np.load(f'images{i + 2}.npy')
+            labels = np.load(f'labels{i + 2}.npy')
+            expand_data.append(images)
+            expand_targets.append(labels)
+
+        expand_data = np.vstack(expand_data).reshape(-1, 3, 32, 32)
+        expand_data = expand_data.transpose((0, 2, 3, 1))
+        expand_targets = np.vstack(expand_targets)
+        # print(expand_data.shape)
+        # print(expand_targets)
+        self.data = np.concatenate((self.data, expand_data))
+        self.one_hot_like_labels = np.concatenate((self.one_hot_like_labels, expand_targets))
+
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: (image, target) where target is index of the target class.
+        """
+        img, target = self.data[index], self.one_hot_like_labels[index]
+
+        # doing this so that it is consistent with all other datasets
+        # to return a PIL Image
+        # print(type(img))
+        # print(img.shape)
+        img = Image.fromarray(np.uint8(img))
+
+        if self.transform is not None:
+            img = self.transform(img)
+
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
+        return img, target
+
 
 parser = argparse.ArgumentParser(description='PyTorch DenseNet Training')
 parser.add_argument('--gpu', default='0', type=str, help='which gpu to use')
@@ -125,24 +178,14 @@ def main():
 
     kwargs = {'num_workers': 1, 'pin_memory': True}
 
-    if args.in_dataset == "CIFAR-10":
-        train_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR10('../../data', train=True, download=True,
-                             transform=transform_train),
-            batch_size=args.batch_size, shuffle=True, **kwargs)
-        val_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR10('../../data', train=False, transform=transform_test),
-            batch_size=args.batch_size, shuffle=True, **kwargs)
-        num_classes = 10
-    elif args.in_dataset == "CIFAR-100":
-        train_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR100('../../data', train=True, download=True,
-                              transform=transform_train),
-            batch_size=args.batch_size, shuffle=True, **kwargs)
-        val_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR100('../../data', train=False, transform=transform_test),
-            batch_size=args.batch_size, shuffle=True, **kwargs)
-        num_classes = 100
+    train_loader = torch.utils.data.DataLoader(
+        expandedCIFAR10('../../data', train=True, download=True,
+                        transform=transform_train),
+        batch_size=args.batch_size, shuffle=True, **kwargs)
+    val_loader = torch.utils.data.DataLoader(
+        datasets.CIFAR10('../../data', train=False, transform=transform_test),
+        batch_size=args.batch_size, shuffle=True, **kwargs)
+    num_classes = 10
 
     if args.ood:
         ood_loader = torch.utils.data.DataLoader(
@@ -263,54 +306,20 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
         # print(input.size())
         nat_input = input.detach().clone()
 
-        # print(type(nat_input))
-        # print(nat_input.size())
-
-        labels = torch.full(size=(input.size()[0], 10), fill_value=0).cuda()
-        labels.scatter_(dim=1, index=torch.unsqueeze(target, dim=1), value=1)
-        # print(labels)
-        # add gaussian
-        num_gaussian_inputs = input.size()[0] // 10
-        # print(input.size())
-        # print(labels.size())
-        # 均一噪声
-        uniform_input = torch.rand((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
-        # uniform_labels = torch.full(size=(num_gaussian_inputs, 10), fill_value=0.1).cuda()
-        # 标准高斯噪声
-        gaussian_input = torch.randn((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
-        gaussian_labels = torch.full(size=(num_gaussian_inputs, 10), fill_value=0.1).cuda()
-        # 纯色图像
-        # pure_input = torch.ones((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
-        # ratio = torch.linspace(i / len(train_loader), (i + 1) / len(train_loader), steps=num_gaussian_inputs)
-        # pure_input *= ratio.reshape(num_gaussian_inputs, 1, 1, 1)
-
-
-        cat_input = torch.cat((nat_input, gaussian_input), 0)
-        cat_labels = torch.cat((labels, gaussian_labels), 0)
-        cat_input = torch.cat((nat_input, uniform_input), 0)
-        cat_labels = torch.cat((labels, gaussian_labels), 0)  # 标签一样
-        # 加了纯色好像变差
-        # cat_input = torch.cat((nat_input, pure_input), 0)
-        # cat_labels = torch.cat((labels, gaussian_labels), 0)  # 标签一样
-
-        # print(nat_input.size())
-        # print(labels.size())
-        # exit(0)
-
-        output = model(cat_input)
+        output = model(nat_input)
         # print(nat_output)
         # loss = criterion(output, target)
         # print(loss)
 
         log_prob = torch.nn.functional.log_softmax(output, dim=1)
-        nat_loss = -torch.sum(log_prob * cat_labels) / args.batch_size
+        nat_loss = -torch.sum(log_prob * target) / args.batch_size
         # print(nat_loss)
         # exit(0)
 
         # measure accuracy and record loss
-        nat_prec1 = accuracy(output.data[:nat_input.size()[0]], target, topk=(1,))[0]
+        # nat_prec1 = accuracy(output.data[:nat_input.size()[0]], target, topk=(1,))[0]
         nat_losses.update(nat_loss.data, input.size(0))
-        nat_top1.update(nat_prec1, input.size(0))
+        # nat_top1.update(nat_prec1, input.size(0))
 
         if not args.adv:
             # compute gradient and do SGD step
@@ -328,10 +337,9 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
             if i % args.print_freq == 0:
                 print('Epoch: [{0}][{1}/{2}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+                      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
                     epoch, i, len(train_loader), batch_time=batch_time,
-                    loss=nat_losses, top1=nat_top1))
+                    loss=nat_losses))
 
             # gaussian训练
 
