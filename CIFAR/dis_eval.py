@@ -125,6 +125,7 @@ def DIS(inputs, outputs, model):
 
 
 def measure_dis(p, q):
+    print(p,',',q,',',p * p.log() - p * q)
     return p * p.log() - p * q
     # return p * (p / (q.exp())).log()
 

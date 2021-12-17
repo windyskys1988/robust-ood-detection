@@ -284,7 +284,6 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
         # ratio = torch.linspace(i / len(train_loader), (i + 1) / len(train_loader), steps=num_gaussian_inputs)
         # pure_input *= ratio.reshape(num_gaussian_inputs, 1, 1, 1)
 
-
         cat_input = torch.cat((nat_input, gaussian_input), 0)
         cat_labels = torch.cat((labels, gaussian_labels), 0)
         cat_input = torch.cat((nat_input, uniform_input), 0)
@@ -431,9 +430,31 @@ def train_ood(train_loader_in, train_loader_out, model, criterion, ood_criterion
 
     end = time.time()
     for i, (in_set, out_set) in enumerate(zip(train_loader_in, train_loader_out)):
-        input = torch.cat((in_set[0], out_set[0]), 0)
-        in_len = len(in_set[0])
-        out_len = len(out_set[0])
+        in_len = len(in_set[0])  # 64
+        out_len = len(out_set[0])  # 128
+        # print(in_set[0].size())
+
+        num_gaussian_inputs = out_len // 8
+        # 均一噪声
+        uniform_input = torch.rand((num_gaussian_inputs, 3, 32, 32))
+        # uniform_labels = torch.full(size=(num_gaussian_inputs, 10), fill_value=0.1).cuda()
+        # 标准高斯噪声
+        # gaussian_input = torch.randn((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
+        gaussian_input = torch.randn((num_gaussian_inputs, 3, 32, 32))
+        # 纯色图像
+        # pure_input = torch.ones((num_gaussian_inputs, input.size()[1], input.size()[2], input.size()[3]))
+        # ratio = torch.linspace(i / len(train_loader), (i + 1) / len(train_loader), steps=num_gaussian_inputs)
+        # pure_input *= ratio.reshape(num_gaussian_inputs, 1, 1, 1)
+
+        input = torch.cat((in_set[0], out_set[0], gaussian_input, uniform_input), 0)
+
+        # out_set = torch.cat((out_set, ), 0)
+        # cat_input = torch.cat((nat_input, uniform_input), 0)
+        out_len += 2 * num_gaussian_inputs
+        # print(in_len)
+        # print(out_len)
+        # exit(0)
+
         target = in_set[1]
 
         target = target.cuda()
@@ -442,6 +463,7 @@ def train_ood(train_loader_in, train_loader_out, model, criterion, ood_criterion
         nat_output = model(nat_input)
 
         nat_in_output = nat_output[:in_len]
+        # nat_out_output = nat_output[in_len:]
         nat_out_output = nat_output[in_len:]
         nat_in_loss = criterion(nat_in_output, target)
 

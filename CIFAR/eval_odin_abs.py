@@ -59,7 +59,6 @@ parser.set_defaults(argument=True)
 
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
-DATASET_PATH = '../../data'
 
 torch.manual_seed(1)
 torch.cuda.manual_seed(1)
@@ -75,24 +74,63 @@ def MSP(outputs, model):
     return nnOutputs
 
 
+def tensor_stat(tag, arr):
+    print(tag + " count ", arr.shape[0], " max ", torch.max(arr), " min ", torch.min(arr), " mean ", torch.mean(arr),
+          " var ",
+          torch.var(arr), " median ", torch.median(arr))
+
+
 def ODIN(inputs, outputs, model, temper, noiseMagnitude1):
     # Calculating the perturbation we need to add, that is,
     # the sign of gradient of cross entropy loss w.r.t. input
+    # print(torch.softmax(outputs,axis=1))
+    # return 0
+
     criterion = nn.CrossEntropyLoss()
 
     maxIndexTemp = np.argmax(outputs.data.cpu().numpy(), axis=1)
 
     # Using temperature scaling
     outputs = outputs / temper
-
     labels = Variable(torch.LongTensor(maxIndexTemp).cuda())
     loss = criterion(outputs, labels)
     loss.backward()
 
     # Normalizing the gradient to binary in {0, 1}
-    # print(type(inputs))
+    # gradient = inputs.grad.data # 5000 best
+    # tensor_stat('grad', inputs.grad.data)
+    # gradient = torch.nn.functional.normalize(inputs.grad.data, dim=0)
+    # tensor_stat('grad', gradient)
+    # exit(0)
+
+    # 绝对值大小对比
+    th_top = torch.mean(inputs.grad.data[inputs.grad.data > 0])
+    # print(th_top)
+    th_bottom = torch.mean(inputs.grad.data[inputs.grad.data < 0])
+    # print(th_bottom)
+    gradient_top = torch.ge(inputs.grad.data, th_top)
+    gradient_bottom = torch.le(inputs.grad.data, th_bottom)
+    gradient_great = gradient_top.float() - gradient_bottom.float()
+    # tensor_stat('grad', gradient_great)
+    # print(gradient_great)
+    # exit(0)
+    # # 取较大绝对值
+    # gradient = gradient_great
+
+    # 取较小绝对值
     gradient = torch.ge(inputs.grad.data, 0)
-    gradient = (gradient.float() - 0.5) * 2
+    gradient = (gradient.float() - 0.5) * 4
+    gradient -= gradient_great
+    # gradient = (gradient - gradient_great) * 6.0
+    # tensor_stat('grad', gradient)
+    # print(gradient[0])
+    # exit(0)
+
+    # print(gradient.float())
+    # 普通 ODIN
+    # gradient = torch.ge(inputs.grad.data, 0)  # 取梯度的符号
+    # gradient = (gradient.float() + 0.5) * 2
+    # tesnsor_stat('grad', gradient)
 
     # Adding small perturbations to images
     tempInputs = torch.add(inputs.data, -noiseMagnitude1, gradient)
@@ -146,21 +184,20 @@ def eval_mahalanobis(sample_mean, precision, regressor, magnitude):
     ])
 
     if args.in_dataset == "CIFAR-10":
-        trainset = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=True, download=True, transform=transform)
-        trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+        trainset = torchvision.datasets.CIFAR10('../../data', train=True, download=True, transform=transform)
+        trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
-        testset = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=False, download=True,
-                                               transform=transform)
-        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+        testset = torchvision.datasets.CIFAR10(root='../../data', train=False, download=True, transform=transform)
+        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
         num_classes = 10
     elif args.in_dataset == "CIFAR-100":
-        trainset = torchvision.datasets.CIFAR100(root=DATASET_PATH, train=True, download=True, transform=transform)
-        trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+        trainset = torchvision.datasets.CIFAR100('../../data', train=True, download=True, transform=transform)
+        trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
-        testset = torchvision.datasets.CIFAR100(root=DATASET_PATH, train=False, download=True,
+        testset = torchvision.datasets.CIFAR100(root='../../data', train=False, download=True,
                                                 transform=transform)
-        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
         num_classes = 100
 
@@ -174,34 +211,33 @@ def eval_mahalanobis(sample_mean, precision, regressor, magnitude):
     model.cuda()
 
     if args.out_dataset == 'SVHN':
-        testsetout = svhn.SVHN(DATASET_PATH + '/SVHN/', split='test',
+        testsetout = svhn.SVHN('datasets/ood_datasets/svhn/', split='test',
                                transform=transforms.ToTensor(), download=False)
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size,
-                                                    shuffle=False, num_workers=2)
+                                                    shuffle=True, num_workers=2)
     elif args.out_dataset == 'dtd':
-        testsetout = torchvision.datasets.ImageFolder(root=DATASET_PATH + "/dtd/images",
+        testsetout = torchvision.datasets.ImageFolder(root="datasets/ood_datasets/dtd/images",
                                                       transform=transforms.Compose(
                                                           [transforms.Resize(32), transforms.CenterCrop(32),
                                                            transforms.ToTensor()]))
-        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=False,
+        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
                                                     num_workers=2)
     elif args.out_dataset == 'places365':
-        testsetout = torchvision.datasets.ImageFolder(root=DATASET_PATH + "/places365/test_subset",
+        testsetout = torchvision.datasets.ImageFolder(root="datasets/ood_datasets/places365/test_subset",
                                                       transform=transforms.Compose(
                                                           [transforms.Resize(32), transforms.CenterCrop(32),
                                                            transforms.ToTensor()]))
-        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=False,
+        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
                                                     num_workers=2)
     else:
-        testsetout = torchvision.datasets.ImageFolder(DATASET_PATH + "/{}".format(args.out_dataset),
+        testsetout = torchvision.datasets.ImageFolder("./datasets/ood_datasets/{}".format(args.out_dataset),
                                                       transform=transform)
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size,
-                                                    shuffle=False, num_workers=2)
+                                                    shuffle=True, num_workers=2)
 
     # set information about feature extaction
     temp_x = torch.rand(2, 3, 32, 32)
     temp_x = Variable(temp_x)
-
     temp_list = model.feature_list(temp_x)[1]
     num_output = len(temp_list)
 
@@ -311,14 +347,15 @@ def eval_msp_and_odin():
     ])
 
     if args.in_dataset == "CIFAR-10":
-        testset = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=False, download=True, transform=transform)
+        testset = torchvision.datasets.CIFAR10(root='../../data', train=False, download=True, transform=transform)
         testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size,
-                                                   shuffle=False, num_workers=2)
+                                                   shuffle=True, num_workers=2)
         num_classes = 10
     elif args.in_dataset == "CIFAR-100":
-        testset = torchvision.datasets.CIFAR100(root=DATASET_PATH, train=False, download=True, transform=transform)
+        testset = torchvision.datasets.CIFAR100(root='../../data', train=False, download=True,
+                                                transform=transform)
         testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size,
-                                                   shuffle=False, num_workers=2)
+                                                   shuffle=True, num_workers=2)
         num_classes = 100
 
     model = dn.DenseNet3(args.layers, num_classes, normalizer=normalizer)
@@ -331,29 +368,42 @@ def eval_msp_and_odin():
     model.cuda()
 
     if args.out_dataset == 'SVHN':
-        testsetout = svhn.SVHN(DATASET_PATH + '/SVHN/', split='test',
+        testsetout = svhn.SVHN('../../data/SVHN/', split='test',
                                transform=transforms.ToTensor(), download=False)
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size,
-                                                    shuffle=False, num_workers=2)
+                                                    shuffle=True, num_workers=2)
     elif args.out_dataset == 'dtd':
-        testsetout = torchvision.datasets.ImageFolder(root=DATASET_PATH + '/dtd/images',
+        testsetout = torchvision.datasets.ImageFolder(root="../../data/dtd/images",
                                                       transform=transforms.Compose(
                                                           [transforms.Resize(32), transforms.CenterCrop(32),
                                                            transforms.ToTensor()]))
-        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=False,
+        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
                                                     num_workers=2)
     elif args.out_dataset == 'places365':
-        testsetout = torchvision.datasets.ImageFolder(root=DATASET_PATH + "/places365/test_subset",
+        testsetout = torchvision.datasets.ImageFolder(root="datasets/ood_datasets/places365/test_subset",
                                                       transform=transforms.Compose(
                                                           [transforms.Resize(32), transforms.CenterCrop(32),
                                                            transforms.ToTensor()]))
-        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=False,
+        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
+                                                    num_workers=2)
+    elif args.out_dataset == 'celeba':
+        testsetout = torchvision.datasets.CelebA(root="../../data",  # download=True,
+                                                 transform=transforms.Compose(
+                                                     [transforms.Resize(32), transforms.CenterCrop(32),
+                                                      transforms.ToTensor()]))
+        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
+                                                    num_workers=2)
+    elif args.out_dataset == 'fake':
+        testsetout = torchvision.datasets.FakeData(size=10000,
+                                                   transform=transforms.Compose(
+                                                       [transforms.Resize(32), transforms.CenterCrop(32),
+                                                        transforms.ToTensor()]))
+        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
                                                     num_workers=2)
     else:
-        testsetout = torchvision.datasets.ImageFolder(DATASET_PATH + "/{}".format(args.out_dataset),
-                                                      transform=transform)
+        testsetout = torchvision.datasets.ImageFolder("../../data/{}".format(args.out_dataset), transform=transform)
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size,
-                                                    shuffle=False, num_workers=2)
+                                                    shuffle=True, num_workers=2)
 
     t0 = time.time()
     f1 = open(os.path.join(save_dir, "confidence_MSP_In.txt"), 'w')
@@ -372,8 +422,9 @@ def eval_msp_and_odin():
 
     count = 0
     for j, data in enumerate(testloaderIn):
-        if j == 10: break
+        # if j == 10: break
         images, _ = data
+        # print(_)
         batch_size = images.shape[0]
 
         if count + batch_size > N:
@@ -397,8 +448,6 @@ def eval_msp_and_odin():
 
         for k in range(batch_size):
             g1.write("{}\n".format(np.max(nnOutputs[k])))
-            # print(np.max(nnOutputs[k]))
-        # exit(0)
 
         count += batch_size
         print("{:4}/{:4} images processed, {:.1f} seconds used.".format(count, N, time.time() - t0))
@@ -416,8 +465,9 @@ def eval_msp_and_odin():
     count = 0
 
     for j, data in enumerate(testloaderOut):
-        if j == 10: break
+        # if j == 10: break
         images, labels = data
+        # print(labels)
         batch_size = images.shape[0]
 
         if args.adv:
@@ -484,28 +534,27 @@ def tune_mahalanobis_hyperparams():
     ])
 
     if args.in_dataset == "CIFAR-10":
-        trainset = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=True, download=True, transform=transform)
-        trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+        trainset = torchvision.datasets.CIFAR10('../../data', train=True, download=True, transform=transform)
+        trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
-        testset = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=False, download=True,
-                                               transform=transform)
-        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+        testset = torchvision.datasets.CIFAR10(root='../../data', train=False, download=True, transform=transform)
+        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
         num_classes = 10
     elif args.in_dataset == "CIFAR-100":
-        trainset = torchvision.datasets.CIFAR100(root=DATASET_PATH, train=True, download=True, transform=transform)
-        trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+        trainset = torchvision.datasets.CIFAR100('./datasets/cifar10', train=True, download=True, transform=transform)
+        trainloaderIn = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
-        testset = torchvision.datasets.CIFAR100(root=DATASET_PATH, train=False, download=True,
+        testset = torchvision.datasets.CIFAR100(root='./datasets/cifar100', train=False, download=True,
                                                 transform=transform)
-        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+        testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
         num_classes = 100
 
     valloaderOut = torch.utils.data.DataLoader(TinyImages(transform=transforms.Compose(
         [transforms.ToTensor(), transforms.ToPILImage(), transforms.RandomCrop(32, padding=4),
          transforms.RandomHorizontalFlip(), transforms.ToTensor()])),
-        batch_size=args.batch_size, shuffle=False, num_workers=2)
+        batch_size=args.batch_size, shuffle=True, num_workers=2)
 
     model = dn.DenseNet3(args.layers, num_classes, normalizer=normalizer)
 
@@ -519,18 +568,6 @@ def tune_mahalanobis_hyperparams():
     # set information about feature extaction
     temp_x = torch.rand(2, 3, 32, 32)
     temp_x = Variable(temp_x)
-    # fl = model.feature_list(temp_x)
-    # print(len(fl))
-    # for it in fl[1]:
-    #     print(it.size())
-    # exit(0)
-    # model.feature_list的0 torch.Size([2, 10])
-    # model.feature_list的1的size
-    # torch.Size([2, 24, 32, 32])
-    # torch.Size([2, 108, 16, 16])
-    # torch.Size([2, 150, 8, 8])
-    # torch.Size([2, 342, 8, 8])
-    # model.feature_list两个返回值，0是原本的预测结果，1是包含各层中间结果的list
     temp_list = model.feature_list(temp_x)[1]
     num_output = len(temp_list)
     feature_list = np.empty(num_output)
@@ -541,20 +578,6 @@ def tune_mahalanobis_hyperparams():
 
     print('get sample mean and covariance')
     sample_mean, precision = sample_estimator(model, num_classes, feature_list, trainloaderIn)
-    # print(len(sample_mean), len(precision))
-    # for it in sample_mean:
-    #     print(it.size())
-    # for it in precision:
-    #     print(it.size())
-    # torch.Size([10, 24])
-    # torch.Size([10, 108])
-    # torch.Size([10, 150])
-    # torch.Size([10, 342])
-    # torch.Size([24, 24])
-    # torch.Size([108, 108])
-    # torch.Size([150, 150])
-    # torch.Size([342, 342])
-    # exit(0)
 
     print('train logistic regression model')
     m = 1000
@@ -598,23 +621,13 @@ def tune_mahalanobis_hyperparams():
         total = 0
         for data_index in range(int(np.floor(train_lr_data.size(0) / args.batch_size))):
             data = train_lr_data[total: total + args.batch_size]
-            # print(data.size()) # torch.Size([40, 3, 32, 32])
-            # exit(0)
             total += args.batch_size
             Mahalanobis_scores = get_Mahalanobis_score(model, data, num_classes, sample_mean, precision, num_output,
                                                        magnitude)
-            # 40*4 list
-            print(Mahalanobis_scores)
-            exit(0)
-            # print(len(Mahalanobis_scores))
-
             train_lr_Mahalanobis.extend(Mahalanobis_scores)
 
         train_lr_Mahalanobis = np.asarray(train_lr_Mahalanobis, dtype=np.float32)
-        # print(train_lr_Mahalanobis.shape) # (2000, 4)
-        # print(train_lr_label.shape) # torch.Size([2000])
-        # exit(0)
-        # 2000个样本，按4个层计算，每个层只出一个结果就是距离，LogisticRegression出这4个层组合的weight，原文里的α
+
         regressor = LogisticRegressionCV().fit(train_lr_Mahalanobis, train_lr_label)
 
         print('Logistic Regressor params:', regressor.coef_, regressor.intercept_)

@@ -4,6 +4,7 @@ import os
 
 import sys
 
+
 sys.path.append("..")
 
 import time
@@ -12,15 +13,14 @@ import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
-import torch.nn.functional as F
 import torch.optim
 import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import torchvision
 import numpy as np
 
 import models.densenet as dn
+import model.wrn as wrn
 
 parser = argparse.ArgumentParser(description='PyTorch DenseNet Training')
 parser.add_argument('--gpu', default='0', type=str, help='which gpu to use')
@@ -34,7 +34,7 @@ parser.add_argument('--iter-size', default=1.0, type=float, help='attack step si
 parser.add_argument('--beta1', default=1.0, type=float, help='beta1 for adv_in_loss')
 parser.add_argument('--beta2', default=0.5, type=float, help='beta2 for nat_out_loss')
 parser.add_argument('--beta3', default=0.5, type=float, help='beta3 for adv_out_loss')
-
+parser.add_argument('--model', default="densenet", type=str, help='densenet|wrn')
 parser.add_argument('--epochs', default=100, type=int,
                     help='number of total epochs to run')
 parser.add_argument('--save-epoch', default=10, type=int,
@@ -89,9 +89,9 @@ fw.close()
 
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-
 torch.manual_seed(1)
 np.random.seed(1)
+
 
 def main():
     # Data loading code
@@ -136,8 +136,12 @@ def main():
         num_classes = 100
 
     # create model
-    model = dn.DenseNet3(args.layers, num_classes, args.growth, reduction=args.reduce,
-                         bottleneck=args.bottleneck, dropRate=args.droprate, normalizer=normalizer)
+    if args.model == 'wrn':
+        # Create model
+        model = wrn.WideResNet(args.layers, num_classes, widen_factor=2, dropRate=args.droprate)
+    else:
+        model = dn.DenseNet3(args.layers, num_classes, args.growth, reduction=args.reduce,
+                             bottleneck=args.bottleneck, dropRate=args.droprate, normalizer=normalizer)
 
     # get the number of model parameters
     print('Number of model parameters: {}'.format(
@@ -234,7 +238,7 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
         # print(selected_label.size())
         # exit(0)
 
-        nat_output = model(selected_input)
+        nat_output = model(selected_input.cuda())
         # print(nat_output.size())
         nat_loss = criterion(nat_output, selected_label)
 
@@ -280,7 +284,7 @@ def validate(val_loader, model, criterion, epoch):
         selected_input = input[selected]
         selected_label = target[selected]
         # compute output
-        output = model(selected_input)
+        output = model(selected_input.cuda())
         loss = criterion(output, selected_label)
 
         # measure accuracy and record loss

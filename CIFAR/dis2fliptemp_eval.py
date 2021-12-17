@@ -88,65 +88,166 @@ def arr_stat(tag, arr):
           np.var(arr), " median ", np.median(arr))
 
 
-def measure_dis(p, q):
-    return p * p.log() - p * q
-    # return p * (p / (q.exp())).log()
+# def DIS(inputs, outputs, model):
 
 
 def ODINDIS(inputs, outputs, model, temper=1000, noiseMagnitude1=0.0014):
-    # torch.set_printoptions(precision=3,sci_mode=False)
-    # print(F.softmax(outputs, dim=1))
+    # 仅做距离评价，如需ODIN，需要用原eval_ood_detection
+    # nat_input = inputs.detach().clone()
+    # trans_input = torch.flip(nat_input, [-1])
+    #
+    # output2 = model(trans_input)
+    # print(output2.size())
+    #
+
+    #
+    # otkl = F.kl_div(F.log_softmax(outputs, dim=1), F.softmax(output2, dim=1), reduce=False)
+    # tokl = F.kl_div(F.log_softmax(output2, dim=1), F.softmax(outputs, dim=1), reduce=False)
+    # # print(torch.sum(otkl + tokl, dim=1))
+    # sm_score = torch.max(F.softmax(outputs, dim=1), dim=1)
+    # # print(sm_score)
+    # # scores = sm_score.values * torch.exp(-torch.sum((otkl + tokl)/2, dim=1))
+    # scores = -torch.sum((otkl + tokl)/2, dim=1)
+    # # print(torch.exp(-torch.sum((otkl + tokl)/2, dim=1)))
+    # # print(scores)
+    # # exit(0)
+    #
+    # # return torch.div(1.0, (otkl + tokl + 0.00001)).cpu().detach().numpy()
+    # # return (-(otkl + tokl)).cpu().detach().numpy()
+    # return scores.cpu().detach().numpy()
+
+    # 连ODIN方法
     maxIndexTemp = np.argmax(outputs.data.cpu().numpy(), axis=1)
     criterion = nn.CrossEntropyLoss()
-    # Using temperature scaling
-
     labels = Variable(torch.LongTensor(maxIndexTemp).cuda())
 
     nat_input = inputs.detach().clone()
+    trans_input = torch.flip(nat_input, [-1])
+    trans_input = Variable(trans_input, requires_grad=True)
 
-    tfparams = np.array([
-        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.1]],
-        [[1.0, 0.0, 0.1], [0.0, 1.0, 0.0]],
-        [[1.0, 0.0, 0.0], [0.0, 1.0, -0.1]],
-        [[1.0, 0.0, -0.1], [0.0, 1.0, 0.0]],
-        [[1.1, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        [[1.0, 0.0, 0.0], [0.0, 1.1, 0.0]],
-        [[0.9, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        [[1.0, 0.0, 0.0], [0.0, 0.9, 0.0]],
-        [[1.0, 0.1, 0.0], [0.0, 1.0, 0.0]],
-        [[1.0, 0.0, 0.0], [0.1, 1.0, 0.0]],
-        [[1.0, -0.1, 0.0], [0.0, 1.0, 0.0]],
-        [[1.0, 0.0, 0.0], [-0.1, 1.0, 0.0]],
-    ])
+    output2 = model(trans_input)
+    # print(outputs)
+    # print(output2)
 
-    affine_params = torch.from_numpy(tfparams).float()
-    # print(affine_params.size())
-    affine_outputs = []
-    for j, affine_param in enumerate(affine_params):
-        # print(affine_param)
-        p2 = nat_input.size()
-        p1 = affine_param.repeat(p2[0], 1, 1)
+    # outputs = outputs / temper
+    # output2 = output2 / temper
 
-        grid = F.affine_grid(p1, p2)
-        trans_data = F.grid_sample(nat_input, grid, padding_mode='reflection')
-        trans_input = Variable(trans_data.data.cpu().cuda(0), requires_grad=True)
+    nat_loss = criterion(outputs, labels)
+    trans_loss = criterion(output2, labels)
 
-        output2 = model(trans_input)
-        # affine_outputs.append(output2)
-        affine_outputs.append(F.softmax(output2))
+    otkl = F.pairwise_distance(outputs, output2, keepdim=True)
+    tokl = F.pairwise_distance(output2, outputs, keepdim=True)
 
-    affine_outputs = torch.stack(affine_outputs)
-    # print(affine_outputs)
-    affine_outputs_sum = torch.sum(affine_outputs, dim=0)
-    # affine_outputs_sum = -torch.var(affine_outputs, dim=0)
-    # print(affine_outputs_sum)
-    # print(affine_outputs_sum[tuple(np.arange(inputs.size()[0])), tuple(labels)])
-    # print(labels.view(inputs.size()[0], 1))
+    # L2距离
+    distance = outputs - output2
+    # print(maxIndexTemp)
+    print(torch.abs(distance)[maxIndexTemp])
+    # print(torch.max(torch.abs(distance),dim=1))
     # exit(0)
 
-    # print(maxIndexTemp)
-    # print(affine_outputs_sum[labels.view(inputs.size()[0], 1)])
-    return affine_outputs_sum[tuple(np.arange(inputs.size()[0])), tuple(labels)].cpu().detach().numpy()
+    # otkl = F.kl_div(F.log_softmax(outputs, dim=1), F.softmax(output2, dim=1), reduce=False)
+    # tokl = F.kl_div(F.log_softmax(output2, dim=1), F.softmax(outputs, dim=1), reduce=False)
+    # otkl2 = measure_dis(F.softmax(output2), F.softmax(outputs))
+    # tokl2 = measure_dis(F.softmax(outputs), F.softmax(output2))
+    # print(otkl)
+    # print(tokl)
+    # print(otkl2)
+    # print(otkl.size())
+    # print(otkl2.size())
+    # print(torch.sum(otkl, dim=1))
+    # print(torch.sum(tokl, dim=1))
+    print('otkl min', torch.min(torch.sum(otkl, dim=1)))
+    # print(torch.mean(torch.sum(otkl2, dim=1)))
+    # print(torch.mean(torch.sum(tokl2, dim=1)))
+    re = -torch.abs(otkl)
+    # re = -(otkl + tokl)
+    return re.cpu().detach().numpy()
+    # exit(0)
+    lmd = args.lmd
+    loss = lmd * (nat_loss + trans_loss) + (1 - lmd) * (
+            torch.mean(torch.sum(otkl, dim=1)) + torch.mean(torch.sum(tokl, dim=1)))
+
+    loss.backward()
+    # 普通 ODIN
+    gradient = torch.ge(inputs.grad.data, 0)
+    gradient = (gradient.float() - 0.5) * 2
+    # tesnsor_stat('grad', gradient)
+
+    # Adding small perturbations to images
+    tempInputs = torch.add(inputs.data, -noiseMagnitude1, gradient)
+    outputs = model(Variable(tempInputs))
+    outputs = outputs / temper
+    # Calculating the confidence after adding perturbations
+    nnOutputs = outputs.data.cpu()
+    nnOutputs = nnOutputs.numpy()
+    nnOutputs = nnOutputs - np.max(nnOutputs, axis=1, keepdims=True)
+    nnOutputs = np.exp(nnOutputs) / np.sum(np.exp(nnOutputs), axis=1, keepdims=True)
+    # return nnOutputs
+
+    # ODIN 2
+    gradient2 = torch.ge(trans_input.grad.data, 0)
+    gradient2 = (gradient2.float() - 0.5) * 2
+    # tesnsor_stat('grad', gradient)
+
+    # Adding small perturbations to images
+    tempInput2 = torch.add(trans_input.data, -noiseMagnitude1, gradient2)
+    output2 = model(Variable(tempInput2))
+    output2 = output2 / temper
+    # Calculating the confidence after adding perturbations
+    nnOutput2 = output2.data.cpu().numpy()
+    nnOutput2 = nnOutput2 - np.max(nnOutput2, axis=1, keepdims=True)
+    nnOutput2 = np.exp(nnOutput2) / np.sum(np.exp(nnOutput2), axis=1, keepdims=True)
+    # return nnOutput2
+
+    print(nnOutputs)
+    print(nnOutput2)
+    arr_stat('nn1', nnOutputs)
+    arr_stat('nn2', nnOutput2)
+
+    # return nnOutputs
+    nnOutputs = torch.Tensor(nnOutputs)
+    nnOutput2 = torch.Tensor(nnOutput2)
+    # print(F.softmax(nnOutputs, dim=1))
+    # print(nnOutput2)
+    # print(torch.sum(nnOutput2,dim=1))
+
+    otkl = measure_dis(nnOutputs, nnOutput2)
+    tokl = measure_dis(nnOutput2, nnOutputs)
+    print(otkl)
+    print(tokl)
+    otkl = F.kl_div(nnOutputs.log(), nnOutput2, reduce=False)
+    tokl = F.kl_div(nnOutput2.log(), nnOutputs, reduce=False)
+    # otkl = F.kl_div(nnOutputs.log(), nnOutput2, reduction='none')
+    # tokl = F.kl_div(nnOutput2.log(), nnOutputs, reduction='none')
+    print(otkl)
+    print(tokl)
+    # exit(0)
+    # print(tokl2)
+    print(torch.sum(otkl, dim=1))
+    print(torch.sum(tokl, dim=1))
+
+    # 接ODIN最佳结果，re = -(otkl + tokl)
+    re = (otkl + tokl)
+    # re = torch.exp(-torch.sum((otkl + tokl) / 2, dim=1)).view(nat_input.size()[0], -1) * nnOutputs
+    # maxre = torch.max(re)
+    # minre = torch.min(re)
+    # print(torch.sum(re, dim=1))
+    # re = F.softmax(otkl + tokl, dim=1)
+    # print(otkl.size())
+    # tensor_stat('df', otkl)
+
+    return re.cpu().detach().numpy()
+
+
+def measure_dis(p, q):
+    # print(p.log(),q.log())
+    return p * (p / q).log()
+    # return p*(-q)
+    # return (-q)
+    # 接ODIN的最佳结果
+    # return p * p.log() - p * q
+    # 用这个是错的，p q值0.1左右，log p q值-2.3左右，这个最后的q没取log导致p*q的值大约0.01，而p*logp的值为0.1*-2.3=-0.23，是后面值的20倍。
+    # 因此得分主要由p * p.log()主导，减掉一个p * q仅仅相当于degrade
 
 
 def print_results(results, stypes):
@@ -226,20 +327,6 @@ def eval_msp_and_odin():
                                                            transforms.ToTensor()]))
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
                                                     num_workers=2)
-    elif args.out_dataset == 'celeba':
-        testsetout = torchvision.datasets.CelebA(root="../../data", # download=True,
-                                                 transform=transforms.Compose(
-                                                     [transforms.Resize(32), transforms.CenterCrop(32),
-                                                      transforms.ToTensor()]))
-        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
-                                                    num_workers=2)
-    elif args.out_dataset == 'fake':
-        testsetout = torchvision.datasets.FakeData(size=10000,
-                                                   transform=transforms.Compose(
-                                                       [transforms.Resize(32), transforms.CenterCrop(32),
-                                                        transforms.ToTensor()]))
-        testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size, shuffle=True,
-                                                    num_workers=2)
     else:
         testsetout = torchvision.datasets.ImageFolder("../../data/{}".format(args.out_dataset), transform=transform)
         testloaderOut = torch.utils.data.DataLoader(testsetout, batch_size=args.batch_size,
@@ -262,8 +349,9 @@ def eval_msp_and_odin():
 
     count = 0
     for j, data in enumerate(testloaderIn):
-        # if j == 10: break
+        if j == 10: break
         images, _ = data
+        # print(_)
         batch_size = images.shape[0]
 
         if count + batch_size > N:
@@ -289,9 +377,10 @@ def eval_msp_and_odin():
         # arr_stat('in',nnOutputs)
 
         for k in range(batch_size):
-            g1.write("{}\n".format(nnOutputs[k]))
+            # g1.write("{}\n".format(nnOutputs[k]))
             # g1.write("{}\n".format(np.max(nnOutputs[k])))
             # g1.write("{}\n".format(np.mean(nnOutputs[k])))
+            g1.write("{}\n".format(np.sum(nnOutputs[k])))
             # g1.write("{}\n".format(np.median(nnOutputs[k])))
             # max or mean or median
 
@@ -311,8 +400,9 @@ def eval_msp_and_odin():
     count = 0
 
     for j, data in enumerate(testloaderOut):
-        # if j == 10: break
+        if j == 10: break
         images, labels = data
+        # print(labels)
         batch_size = images.shape[0]
 
         if args.adv:
@@ -335,10 +425,12 @@ def eval_msp_and_odin():
         # arr_stat('out',nnOutputs)
 
         for k in range(batch_size):
-            g2.write("{}\n".format(nnOutputs[k]))
+            # g2.write("{}\n".format(nnOutputs[k]))
             # g2.write("{}\n".format(np.max(nnOutputs[k])))
             # g2.write("{}\n".format(np.mean(nnOutputs[k])))
+            g2.write("{}\n".format(np.sum(nnOutputs[k])))
             # g2.write("{}\n".format(np.median(nnOutputs[k])))
+            # max for ODIN or mean or median for KL DIS
 
         count += batch_size
         print("{:4}/{:4} images processed, {:.1f} seconds used.".format(count, N, time.time() - t0))

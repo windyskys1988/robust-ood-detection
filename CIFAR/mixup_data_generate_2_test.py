@@ -39,8 +39,6 @@ for i in range(10):
 
 # print(sample_positions)
 sample_positions = np.array(sample_positions).squeeze()
-# (10, 5000)
-# print(sample_positions.shape)
 
 # c1_pos = sample_positions[0][0:8]
 # c2_pos = sample_positions[1][0:8]
@@ -59,33 +57,63 @@ count = 5000
 
 np.random.seed(1)
 
+np_targets = np.array([cifar10dataset.targets]).squeeze()
+
+
+# def combine_images(sample_positions, num_classes=2, num_images=count):
+#     perm = [np.random.permutation(count) for _ in range(num_classes)]
+#     perm = np.array(perm)[:, 0:num_images]
+#     # print(perm)
+#     # print(sample_positions[0:num_classes, perm])
+#     images = []
+#     labels = []
+#     for i in range(num_classes):
+#         # print(perm[i])
+#         images.append(cifar10dataset.data[sample_positions[i][perm[i]]])
+#         # print(eye[i].expand_dims(1).shape)
+#         labels.append(np.expand_dims(eye[i], axis=0).repeat(num_images, axis=0))
+#
+#     # return (num_classes,num_images,W,H,C)
+#     return np.array(images), np.array(labels)
 
 def combine_images(sample_positions, num_classes=2, num_images=count):
-    perm = [np.random.permutation(count) for _ in range(num_classes)]
-    perm = np.array(perm)[:, 0:num_images]
-    # print(perm)
-    # print(sample_positions[0:num_classes, perm])
     images = []
     labels = []
-    for i in range(num_classes):
-        # print(perm[i])
-        images.append(cifar10dataset.data[sample_positions[i][perm[i]]])
-        # print(eye[i].expand_dims(1).shape)
-        labels.append(np.expand_dims(eye[i], axis=0).repeat(num_images, axis=0))
-
-    # return np.vstack(images)
+    for _ in range(num_images):
+        which_class = np.random.permutation(10)[:num_classes]
+        d2 = tuple((np.random.rand(num_classes) * 5000).astype(int))
+        indices = sample_positions[which_class, d2]
+        # print(which_class)
+        # print(d2)
+        # print(sample_positions[which_class,d2])
+        # exit(0)
+        # print(cifar10dataset.data[indices].shape)
+        images.append(cifar10dataset.data[indices])
+        # print(np_targets[indices])
+        # print(eye[np_targets[indices]])
+        # exit(0)
+        labels.append(eye[np_targets[indices]])
+        # labels.append(np.expand_dims(eye[i], axis=0).repeat(num_images, axis=0))
+    # (num_images,num_classes,W,H,C)
     return np.array(images), np.array(labels)
 
 
-for i in range(4):
-    images, labels = combine_images(sample_positions, num_classes=i+2, num_images=5000)
+for i in range(1):
+    images, labels = combine_images(sample_positions, num_classes=i + 2, num_images=20)
     print(images.shape)
     print(labels.shape)
-    fused_images = np.mean(images, axis=0)
-    fused_labels = np.mean(labels, axis=0)
+    # exit(0)
+    fused_images = np.mean(images, axis=1)
+    fused_labels = np.mean(labels, axis=1)
 
-    np.save(f'images{i+2}.npy', fused_images)
-    np.save(f'labels{i+2}.npy', fused_labels)
+    np.save(f'images_2_{i + 2}.npy', fused_images)
+    np.save(f'labels_2_{i + 2}.npy', fused_labels)
 
     print(fused_images.shape)
     print(fused_labels.shape)
+
+    trans_images = torchvision.utils.make_grid(torch.from_numpy(fused_images.transpose((0,3,1,2))), nrow=batch_size).numpy().transpose(1, 2, 0)/255
+    print(trans_images.shape)
+    plt.imshow(trans_images)
+    plt.show()
+    exit(0)

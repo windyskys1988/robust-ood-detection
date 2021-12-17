@@ -16,16 +16,25 @@ import models.densenet as dn
 import numpy as np
 import time
 import torch.nn.functional as F
+import model.wrn as wrn
 
 parser = argparse.ArgumentParser(description='Pytorch Detecting Out-of-distribution examples in neural networks')
-
+parser.add_argument('--model-name', nargs='+', required=True)
+parser.add_argument('--model-type', nargs='+', required=True)
 parser.add_argument('--in-dataset', default="CIFAR-10", type=str, help='in-distribution dataset')
 parser.add_argument('--out-dataset', default="LSUN_resize", type=str,
                     help='out-of-distribution dataset')
-parser.add_argument('--name', required=True, type=str,
-                    help='neural network name and training set')
+# parser.add_argument('--name', required=True, type=str,
+#                     help='neural network name and training set')
 parser.add_argument('--adv', help='adv ood evaluation', action='store_true')
-
+parser.add_argument('--growth', default=12, type=int,
+                    help='number of new channels per layer (default: 12)')
+parser.add_argument('--droprate', default=0.0, type=float,
+                    help='dropout probability (default: 0.0)')
+parser.add_argument('--reduce', default=0.5, type=float,
+                    help='compression rate in transition stage (default: 0.5)')
+parser.add_argument('--no-bottleneck', dest='bottleneck', action='store_false',
+                    help='To not use bottleneck block')
 parser.add_argument('--gpu', default='0', type=str,
                     help='gpu index')
 parser.add_argument('--epochs', default=100, type=int,
@@ -42,6 +51,9 @@ parser.add_argument('--print-freq', '-p', default=50, type=int,
 parser.set_defaults(argument=True)
 
 args = parser.parse_args()
+print(args.model_type)
+print(args.model_name)
+# exit(0)
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
 torch.manual_seed(1)
@@ -49,19 +61,29 @@ torch.cuda.manual_seed(1)
 np.random.seed(1)
 
 
-def tesnsor_stat(tag, arr):
+def tensor_stat(tag, arr):
     print(tag + " count ", arr.shape[0], " max ", torch.max(arr), " min ", torch.min(arr), " mean ", torch.mean(arr),
           " var ",
           torch.var(arr), " median ", torch.median(arr))
 
 
+def create_model(model_type, num_classes, normalizer):
+    if model_type == 'wrn':
+        # Create model
+        model = wrn.WideResNet(args.layers, num_classes, widen_factor=2, dropRate=args.droprate)
+    else:
+        model = dn.DenseNet3(args.layers, num_classes, args.growth, reduction=args.reduce,
+                             bottleneck=args.bottleneck, dropRate=args.droprate, normalizer=normalizer)
+    return model
+
+
 def eval_acc():
     print('test accuracy')
 
-    save_dir = os.path.join('output/ood_scores/', args.out_dataset, args.name, 'adv' if args.adv else 'nat')
-
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    # save_dir = os.path.join('output/ood_scores/', args.out_dataset, args.name, 'adv' if args.adv else 'nat')
+    #
+    # if not os.path.exists(save_dir):
+    #     os.makedirs(save_dir)
 
     start = time.time()
     # loading data sets
@@ -83,22 +105,20 @@ def eval_acc():
                                                    shuffle=True, num_workers=2)
         num_classes = 100
 
-    model1 = dn.DenseNet3(args.layers, num_classes, normalizer=normalizer)
-    model2 = dn.DenseNet3(args.layers, num_classes, normalizer=normalizer)
+    model1 = create_model(args.model_type[0], num_classes, normalizer)
+    model2 = create_model(args.model_type[1], num_classes, normalizer)
+    # model1 = dn.DenseNet3(args.layers, num_classes, normalizer=normalizer)
+    # model2 = dn.DenseNet3(args.layers, num_classes, normalizer=normalizer)
 
-    checkpoint1 = torch.load(
-        "./checkpoints/{name}/checkpoint_{epochs}.pth.tar".format(name=args.name + '04', epochs=args.epochs))
-    model1.load_state_dict(checkpoint1['state_dict'])
+    load_model(model1, args.model_name[0])
+    load_model(model2, args.model_name[1])
 
-    model1.eval()
-    model1.cuda()
-
-    checkpoint2 = torch.load(
-        "./checkpoints/{name}/checkpoint_{epochs}.pth.tar".format(name=args.name + '59', epochs=args.epochs))
-    model2.load_state_dict(checkpoint2['state_dict'])
-
-    model2.eval()
-    model2.cuda()
+    # checkpoint2 = torch.load(
+    #     "./checkpoints/{name}/checkpoint_{epochs}.pth.tar".format(name=args.name + '59', epochs=args.epochs))
+    # model2.load_state_dict(checkpoint2['state_dict'])
+    #
+    # model2.eval()
+    # model2.cuda()
 
     nat_losses = AverageMeter()
     nat_top1 = AverageMeter()
@@ -109,22 +129,46 @@ def eval_acc():
     # print(gaussian_inputs.size())
     # output = model(gaussian_inputs)
     criterion = nn.CrossEntropyLoss()
+    torch.set_printoptions(precision=8, sci_mode=False)
 
     for i, (input, target) in enumerate(testloaderIn):
         target = target.cuda()
 
-        add_num = int(target.size()[0] / 7)
+        input_num = target.size()[0]
 
         nat_input = input.detach().clone()
 
-        output1 = model1(nat_input)
-        output2 = model2(nat_input)
+        # print(target)
+        # print(type(nat_input))
+        # tensor_stat('input', nat_input)
+        # weak_noise = (torch.rand((input_num, 3, 32, 32)) - 0.5) * 0.1
+        # trans_input = torch.clamp(nat_input + weak_noise, 0, 1)
+        trans_input = torch.flip(nat_input, [-1])
+        # tensor_stat('trans', trans_input)
+        # exit(0)
 
-        torch.set_printoptions(precision=8, sci_mode=False)
+        output1 = model1(nat_input.cuda())
+        output2 = model2(nat_input.cuda())
+
+        trans_output1 = model1(trans_input.cuda())
+        trans_output2 = model2(trans_input.cuda())
+
+        diff1 = torch.pow(F.softmax(trans_output1) - F.softmax(output1), 2)
+        diff2 = torch.pow(F.softmax(trans_output2) - F.softmax(output2), 2)
+        # re = torch.sum(diff1, dim=1) > torch.sum(diff2, dim=1)
+        # gt = target > 4
+        # print(re == gt)
+        # exit(0)
+        score1 = -torch.sum(diff1, dim=1)
+        score2 = -torch.sum(diff2, dim=1)
+
+        mask = [[1, 1, 1, 1, 1, 0, 0, 0, 0, 0] if x else [0, 0, 0, 0, 0, 1, 1, 1, 1, 1] for x in score1 > score2]
+
         # print(output1.size())
         # print(output2.size())
-
-        nat_output = F.softmax(torch.cat((F.softmax(output1), F.softmax(output2)), dim=1),dim=1)
+        # 直接判断
+        # nat_output = F.softmax(torch.cat((F.softmax(output1), F.softmax(output2)), dim=1), dim=1)
+        nat_output = torch.cat((F.softmax(output1), F.softmax(output2)), dim=1) * torch.tensor(mask).float().cuda()
         # print(nat_output.size())
         # print(nat_output[:10])
         # print(torch.argmax(torch.cat((output1, output2), dim=1), dim=1))
@@ -157,6 +201,14 @@ def eval_acc():
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
                 i, len(testloaderIn),
                 loss=nat_losses, top1=nat_top1))
+
+
+def load_model(model, model_name):
+    checkpoint = torch.load(
+        "./checkpoints/{name}/checkpoint_{epochs}.pth.tar".format(name=model_name, epochs=args.epochs))
+    model.load_state_dict(checkpoint['state_dict'])
+    model.eval()
+    model.cuda()
 
 
 class AverageMeter(object):

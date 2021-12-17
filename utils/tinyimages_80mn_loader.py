@@ -6,7 +6,8 @@ class TinyImages(torch.utils.data.Dataset):
 
     def __init__(self, transform=None, exclude_cifar=True):
 
-        data_file = open('datasets/unlabeled_datasets/80M_Tiny_Images/tiny_images.bin', "rb")
+        # data_file = open('datasets/unlabeled_datasets/80M_Tiny_Images/tiny_images.bin', "rb")
+        data_file = open('../../data/tiny_images.bin', "rb")
 
         def load_image(idx):
             data_file.seek(idx * 3072)
@@ -21,7 +22,7 @@ class TinyImages(torch.utils.data.Dataset):
 
         if exclude_cifar:
             self.cifar_idxs = []
-            with open('datasets/unlabeled_datasets/80M_Tiny_Images/80mn_cifar_idxs.txt', 'r') as idxs:
+            with open('../../data/80mn_cifar_idxs.txt', 'r') as idxs:
                 for idx in idxs:
                     # indices in file take the 80mn database to start at 1, hence "- 1"
                     self.cifar_idxs.append(int(idx) - 1)
