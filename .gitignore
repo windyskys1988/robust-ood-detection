@@ -8,6 +8,7 @@
 *.bmp
 *.gif
 *.pkl
+*.log
 *.pth
 *.pth.*
 *.ckpt.*

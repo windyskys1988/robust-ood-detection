@@ -21,6 +21,8 @@ import numpy as np
 
 import models.densenet as dn
 import model.wrn as wrn
+import expand_cifar100_dataset
+import expand_cifar10_dataset
 
 parser = argparse.ArgumentParser(description='PyTorch DenseNet Training')
 parser.add_argument('--gpu', default='0', type=str, help='which gpu to use')
@@ -72,6 +74,8 @@ parser.add_argument('--name', required=True, type=str,
                     help='name of experiment')
 parser.add_argument('--tensorboard',
                     help='Log progress to TensorBoard', action='store_true')
+parser.add_argument('--tag',default=[0,1,2,3,4], nargs='+', type=int,
+                    help='The tag of selected classes (default: [0 1 2 3 4])')
 parser.set_defaults(bottleneck=True)
 parser.set_defaults(augment=True)
 
@@ -114,27 +118,28 @@ def main():
     ])
 
     kwargs = {'num_workers': 1, 'pin_memory': True}
-
+    num_classes = len(args.tag)
     if args.in_dataset == "CIFAR-10":
         train_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR10('../../data', train=True, download=True,
-                             transform=transform_train),
+            expand_cifar10_dataset.taggedCIFAR10('../../data', train=True, download=True,
+                             transform=transform_train,tag=args.tag),
             batch_size=args.batch_size, shuffle=True, **kwargs)
         val_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR10('../../data', train=False, transform=transform_test),
+            expand_cifar10_dataset.taggedCIFAR10('../../data', train=False, download=True,
+                             transform=transform_test,tag=args.tag),
             batch_size=args.batch_size, shuffle=True, **kwargs)
-        # TODO Hard Coded!
-        num_classes = 5
     elif args.in_dataset == "CIFAR-100":
         train_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR100('../../data', train=True, download=True,
-                              transform=transform_train),
+            expand_cifar100_dataset.taggedCIFAR100('../../data', train=True, download=True,
+                            transform=transform_train, tag=args.tag),
             batch_size=args.batch_size, shuffle=True, **kwargs)
         val_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR100('../../data', train=False, transform=transform_test),
+            expand_cifar100_dataset.taggedCIFAR100('../../data', train=False, download=True,
+                            transform=transform_test, tag=args.tag),
             batch_size=args.batch_size, shuffle=True, **kwargs)
-        num_classes = 100
-
+    else:
+        sys.stderr.write("No such dataset.")
+        exit(0)
     # create model
     if args.model == 'wrn':
         # Create model
@@ -226,26 +231,14 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, attack_in
         add_num = int(target.size()[0] / 7)
 
         nat_input = input.detach().clone()
-
-        # print(nat_input.size())
-        # print(nat_input)
-        # print(target)
-        selected = target < 5
-        # print(selected)
-        selected_input = nat_input[selected]
-        selected_label = target[selected]
-        # print(selected_input.size())
-        # print(selected_label.size())
-        # exit(0)
-
-        nat_output = model(selected_input.cuda())
+        nat_output = model(nat_input.cuda())
         # print(nat_output.size())
-        nat_loss = criterion(nat_output, selected_label)
+        nat_loss = criterion(nat_output, target)
 
         # measure accuracy and record loss
-        nat_prec1 = accuracy(nat_output.data, selected_label, topk=(1,))[0]
-        nat_losses.update(nat_loss.data, selected_input.size(0))
-        nat_top1.update(nat_prec1, selected_input.size(0))
+        nat_prec1 = accuracy(nat_output.data, target, topk=(1,))[0]
+        nat_losses.update(nat_loss.data, nat_input.size(0))
+        nat_top1.update(nat_prec1, nat_input.size(0))
 
         # compute gradient and do SGD step
         loss = nat_loss
@@ -280,17 +273,14 @@ def validate(val_loader, model, criterion, epoch):
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
         target = target.cuda()
-        selected = target < 5
-        selected_input = input[selected]
-        selected_label = target[selected]
         # compute output
-        output = model(selected_input.cuda())
-        loss = criterion(output, selected_label)
+        output = model(input.cuda())
+        loss = criterion(output, target)
 
         # measure accuracy and record loss
-        prec1 = accuracy(output.data, selected_label, topk=(1,))[0]
-        losses.update(loss.data, selected_input.size(0))
-        top1.update(prec1, selected_input.size(0))
+        prec1 = accuracy(output.data, target, topk=(1,))[0]
+        losses.update(loss.data, input.size(0))
+        top1.update(prec1, input.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
