@@ -11,12 +11,15 @@ from torch.autograd import Variable
 import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 import models.densenet as dn
 import numpy as np
 import time
 import torch.nn.functional as F
 import model.wrn as wrn
+import expand_cifar100_dataset
+import expand_cifar10_dataset
+import ipdb
 
 parser = argparse.ArgumentParser(description='Pytorch Detecting Out-of-distribution examples in neural networks')
 parser.add_argument('--model-name', nargs='+', required=True)
@@ -39,7 +42,8 @@ parser.add_argument('--gpu', default='0', type=str,
                     help='gpu index')
 parser.add_argument('--epochs', default=100, type=int,
                     help='number of total epochs to run')
-
+parser.add_argument('--num', default=5, type=int,
+                    help='number of classes')
 parser.add_argument('-b', '--batch-size', default=40, type=int,
                     help='mini-batch size')
 parser.add_argument('--layers', default=100, type=int,
@@ -92,19 +96,23 @@ def eval_acc():
     transform = transforms.Compose([
         transforms.ToTensor(),
     ])
-
+    num_classes=args.num
+    classes=[]
     if args.in_dataset == "CIFAR-10":
-        testset = torchvision.datasets.CIFAR10(root='../../data', train=False, download=True, transform=transform)
+        testset =expand_cifar10_dataset.taggedCIFAR10('../../data', train=False, download=True,
+                             transform=transform,tag=np.array(range(num_classes*2)))
         testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size,
                                                    shuffle=True, num_workers=2)
-        num_classes = 5
+        classes=testset.classes
     elif args.in_dataset == "CIFAR-100":
-        testset = torchvision.datasets.CIFAR100(root='../../data', train=False, download=True,
-                                                transform=transform)
+        testset =expand_cifar100_dataset.taggedCIFAR100('../../data', train=False, download=True,
+                             transform=transform,tag=np.array(range(num_classes*2)))
         testloaderIn = torch.utils.data.DataLoader(testset, batch_size=args.batch_size,
                                                    shuffle=True, num_workers=2)
-        num_classes = 100
-
+        classes=testset.classes
+    else:
+        sys.stderr.write("No such dataset.")
+        exit(0)
     model1 = create_model(args.model_type[0], num_classes, normalizer)
     model2 = create_model(args.model_type[1], num_classes, normalizer)
     # model1 = dn.DenseNet3(args.layers, num_classes, normalizer=normalizer)
@@ -161,8 +169,11 @@ def eval_acc():
         # exit(0)
         score1 = -torch.sum(diff1, dim=1)
         score2 = -torch.sum(diff2, dim=1)
-
-        mask = [[1, 1, 1, 1, 1, 0, 0, 0, 0, 0] if x else [0, 0, 0, 0, 0, 1, 1, 1, 1, 1] for x in score1 > score2]
+        mask1 = np.concatenate((np.zeros((num_classes), dtype=np.int) + 1, np.zeros((num_classes), dtype=np.int)),
+                               axis=0)
+        mask2 = np.concatenate((np.zeros((num_classes), dtype=np.int), np.zeros((num_classes), dtype=np.int) + 1),
+                               axis=0)
+        mask = [mask1 if x else mask2 for x in score1 > score2]
 
         # print(output1.size())
         # print(output2.size())
@@ -201,6 +212,21 @@ def eval_acc():
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
                 i, len(testloaderIn),
                 loss=nat_losses, top1=nat_top1))
+            # 显示图像，标题为类名
+            fig = plt.figure(figsize=(10, 10))
+            # 显示16张图片
+            for idx in np.arange(args.batch_size):
+                ax = fig.add_subplot(4, args.batch_size / 4, idx + 1, xticks=[], yticks=[])
+                img = input[idx]
+                plt.imshow((np.transpose(img, (1, 2, 0))))
+                tag = target[idx].cpu().numpy()
+                pred=np.argmax(nat_output[idx].detach().cpu().numpy())
+                if tag==pred:
+                    ax.set_title(classes[pred],color="green")
+                else:
+                    ax.set_title(classes[pred], color="red")
+            fig.savefig("output_{}{}.jpg".format(args.in_dataset,i))
+
 
 
 def load_model(model, model_name):

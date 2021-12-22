@@ -8,13 +8,14 @@
 *.bmp
 *.gif
 *.pkl
+*.log
 *.pth
 *.pth.*
 *.ckpt.*
 **/softmax_scores*
 result*
 checkpoint
-
+datasets/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
