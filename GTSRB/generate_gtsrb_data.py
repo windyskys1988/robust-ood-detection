@@ -3,6 +3,7 @@ from skimage.transform import warp
 from skimage.transform import ProjectiveTransform
 import cv2
 import os
+num_classes=43
 
 def rotate_image(image, max_angle = 15):
     rotate_out = rotate(image, np.random.uniform(-max_angle, max_angle), mode='edge')
@@ -74,7 +75,7 @@ def augment_and_balance_data(X_train, y_train, no_examples_per_class =10000):
     y_balance = np.empty([0], dtype = y_train.dtype)
 
 
-    for c, count in zip(range(43), class_counts):
+    for c, count in zip(range(num_classes), class_counts):
         ##Copy over the current data for the given class
         X_orig = X_train[y_train == c]
         y_orig = y_train[y_train == c]
@@ -102,47 +103,21 @@ from pandas.io.parsers import read_csv
 
 np.random.seed(1)
 
-training_file = 'datasets/gtsrb/train.p'
-validation_file='datasets/gtsrb/valid.p'
-testing_file = 'datasets/gtsrb/test.p'
+training_file = 'datasets/gtsrb/Training'
+testing_file = 'datasets/gtsrb/Flnal_test'
 
 with open(training_file, mode='rb') as f:
     train = pickle.load(f)
-with open(validation_file, mode='rb') as f:
-    valid = pickle.load(f)
 with open(testing_file, mode='rb') as f:
     test = pickle.load(f)
 
 X_train, y_train = train['features'], train['labels']
-X_valid, y_valid = valid['features'], valid['labels']
 X_test, y_test = test['features'], test['labels']
 
 X_out, y_out = augment_and_balance_data(X_train, y_train, 10000)
 
 np.savez_compressed('datasets/gtsrb/train', images = X_out, labels = y_out)
-np.savez_compressed('datasets/gtsrb/valid', images = X_valid, labels = y_valid)
 np.savez_compressed('datasets/gtsrb/test', images = X_test, labels = y_test)
-
-loaded = np.load('datasets/gtsrb/train.npz')
-X_train = loaded['images']
-y_train = loaded['labels']
-print('train data')
-print(X_train.shape)
-print(y_train.shape)
-
-loaded = np.load('datasets/gtsrb/valid.npz')
-X_valid = loaded['images']
-y_valid = loaded['labels']
-print('valid data')
-print(X_valid.shape)
-print(y_valid.shape)
-
-loaded = np.load('datasets/gtsrb/test.npz')
-X_test = loaded['images']
-y_test = loaded['labels']
-print('test data')
-print(X_test.shape)
-print(y_test.shape)
 
 import torchvision
 
@@ -159,26 +134,11 @@ save_dir = os.path.join('datasets', 'gtsrb', 'data', 'train')
 if not os.path.exists(save_dir):
 	os.makedirs(save_dir)
 
-for i in range(43):
+for i in range(num_classes):
     os.makedirs(os.path.join(save_dir, '%02d'%i))
 
-class_count = np.zeros(43)
+class_count = np.zeros(num_classes)
 for x, y in zip(X_train, y_train):
-    x_t = transform(x)
-
-    torchvision.utils.save_image(x_t, os.path.join(save_dir, '%02d'%y, '%d.png'%class_count[y]))
-    class_count[y] += 1
-
-save_dir = os.path.join('datasets', 'gtsrb', 'data', 'valid')
-
-if not os.path.exists(save_dir):
-	os.makedirs(save_dir)
-
-for i in range(43):
-    os.makedirs(os.path.join(save_dir, '%02d'%i))
-
-class_count = np.zeros(43)
-for x, y in zip(X_valid, y_valid):
     x_t = transform(x)
 
     torchvision.utils.save_image(x_t, os.path.join(save_dir, '%02d'%y, '%d.png'%class_count[y]))
@@ -189,12 +149,12 @@ save_dir = os.path.join('datasets', 'gtsrb', 'data', 'test')
 if not os.path.exists(save_dir):
 	os.makedirs(save_dir)
 
-for i in range(43):
+for i in range(num_classes):
     os.makedirs(os.path.join(save_dir, '%02d'%i))
 
 from sklearn.utils import shuffle
 X_test, y_test = shuffle(X_test, y_test, random_state=1)
-class_count = np.zeros(43)
+class_count = np.zeros(num_classes)
 cnt = 0
 
 for x, y in zip(X_test, y_test):

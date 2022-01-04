@@ -18,9 +18,9 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision
 import numpy as np
-
 import models.densenet as dn
 from utils import LinfPGDAttack, TinyImages
+import expand_GTSRB
 
 # used for logging to TensorBoard
 from tensorboard_logger import configure, log_value
@@ -77,6 +77,8 @@ parser.add_argument('--name', required=True, type=str,
                     help='name of experiment')
 parser.add_argument('--tensorboard',
                     help='Log progress to TensorBoard', action='store_true')
+parser.add_argument('--num',default=43, type=int,
+                    help='num of classes (default: 43)')
 parser.set_defaults(bottleneck=True)
 parser.set_defaults(augment=True)
 
@@ -98,25 +100,26 @@ torch.manual_seed(1)
 np.random.seed(1)
 
 def main():
-    if args.tensorboard: configure("runs/%s"%(args.name))
+    # if args.tensorboard: configure("runs/%s"%(args.name))
 
     # Data loading code
     normalizer = transforms.Normalize((0.3337, 0.3064, 0.3171), ( 0.2672, 0.2564, 0.2629))
 
     transform = transforms.Compose([
+        transforms.Resize(32),
+        transforms.RandomCrop(32),
         transforms.ToTensor(),
         ])
 
     kwargs = {'num_workers': 1, 'pin_memory': True}
 
     train_loader = torch.utils.data.DataLoader(
-        torchvision.datasets.ImageFolder('./datasets/gtsrb/data/train', transform=transform),
+        expand_GTSRB.taggedGTSRB('./datasets/gtsrb/data', transform=transform,train=True,tag=args.tag),
         batch_size=args.batch_size, shuffle=True, **kwargs)
     val_loader = torch.utils.data.DataLoader(
-        torchvision.datasets.ImageFolder('./datasets/gtsrb/data/valid', transform=transform),
+        expand_GTSRB.taggedGTSRB('./datasets/gtsrb/data', transform=transform, train=False, tag=args.tag),
         batch_size=args.batch_size, shuffle=False, **kwargs)
-
-    num_classes = 43
+    num_classes = len(args.tag)
 
     if args.ood:
         ood_loader = torch.utils.data.DataLoader(
