@@ -12,6 +12,9 @@
 *.pth
 *.pth.*
 *.ckpt.*
+*.tar
+*.gz
+*.zip
 **/softmax_scores*
 result*
 checkpoint

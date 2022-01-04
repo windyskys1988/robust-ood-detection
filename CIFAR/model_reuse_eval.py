@@ -225,7 +225,7 @@ def eval_acc():
                     ax.set_title(classes[pred],color="green")
                 else:
                     ax.set_title(classes[pred], color="red")
-            fig.savefig("output_{}{}.jpg".format(args.in_dataset,i))
+            fig.savefig("output_{}_{}_{}.jpg".format(args.in_dataset,args.model_name,i))
 
 
 
